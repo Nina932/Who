@@ -114,6 +114,7 @@ lib/
   style.ts              Voice learned from the drafts you edit
   store.ts              Atomic JSON persistence under .thor/
   scheduler.ts          Cadence parsing and the tick that fires due loops
+  tools.ts              Validated tool calls — where a loop touches the world
   connectors.ts         Google OAuth + Drive / Calendar / Gmail calls
   guard.ts              Origin and secret checks on mutating endpoints
   agents.ts             The roster — 18 seats, 4 families
@@ -134,7 +135,8 @@ read from that one array.
 ## Tests
 
 ```bash
-npm test        # 61 tests, no API keys needed
+npm test              # 75 tests, no API keys needed
+npm run verify:models # checks every configured model ID actually exists
 ```
 
 Node's built-in runner over the pure core. They caught a live routing bug on
@@ -147,6 +149,11 @@ learnings), the scheduler, Google connectors (Drive, Calendar, Gmail) over a
 real OAuth flow, durable memory, style learning, persistence, and write
 protection on every mutating endpoint.
 
-Not built: LinkedIn / Chat / Slides connectors, a loop step that calls a
-connector, and image generation. See the end of
-[`docs/ENGINE.md`](docs/ENGINE.md) for the honest list.
+Loops now reach the world: past its gate, the Content Engine places approved
+posts on the calendar and Inbound saves its reply as a Gmail draft. Connectors
+cover Drive, Calendar, Gmail, Slides and LinkedIn; image generation is wired to
+Imagen. State runs on the filesystem by default or Upstash Redis for
+serverless.
+
+Not built: Chat and Sheets connectors, and horizontal scale (the write chain is
+per-process). See the end of [`docs/ENGINE.md`](docs/ENGINE.md).

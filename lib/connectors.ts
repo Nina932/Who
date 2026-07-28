@@ -17,35 +17,50 @@
 
 import { id, mutate, readCollection } from "./store";
 
-export type ConnectorId = "google-drive" | "google-calendar" | "gmail";
+export type ConnectorId =
+  | "google-drive"
+  | "google-calendar"
+  | "gmail"
+  | "google-slides"
+  | "linkedin";
+
+export type OAuthProvider = "google" | "linkedin";
 
 export interface ConnectorSpec {
   id: ConnectorId;
   name: string;
+  provider: OAuthProvider;
   /** The agent that reaches through this surface. */
   ownerAgentId: string;
   scopes: string[];
   description: string;
+  /** True when the connector can change something outside Thor. */
+  writes: boolean;
 }
 
 export const CONNECTORS: ConnectorSpec[] = [
   {
     id: "google-drive",
     name: "Drive",
+    provider: "google",
     ownerAgentId: "researcher",
     scopes: ["https://www.googleapis.com/auth/drive.readonly"],
     description: "Read documents and assets. Read-only by design.",
+    writes: false,
   },
   {
     id: "google-calendar",
     name: "Calendar",
+    provider: "google",
     ownerAgentId: "chief-of-staff",
     scopes: ["https://www.googleapis.com/auth/calendar.events"],
     description: "Read availability and put approved work on the calendar.",
+    writes: true,
   },
   {
     id: "gmail",
     name: "Email",
+    provider: "google",
     ownerAgentId: "chief-of-staff",
     // compose, not send: drafts wait for a human.
     scopes: [
@@ -53,6 +68,29 @@ export const CONNECTORS: ConnectorSpec[] = [
       "https://www.googleapis.com/auth/gmail.compose",
     ],
     description: "Read the inbox and prepare drafts. Never sends unattended.",
+    writes: true,
+  },
+  {
+    id: "google-slides",
+    name: "Slides",
+    provider: "google",
+    ownerAgentId: "design",
+    scopes: [
+      "https://www.googleapis.com/auth/presentations",
+      "https://www.googleapis.com/auth/drive.file",
+    ],
+    description: "Turn an approved outline into a deck. drive.file scope only touches what Thor creates.",
+    writes: true,
+  },
+  {
+    id: "linkedin",
+    name: "LinkedIn",
+    provider: "linkedin",
+    ownerAgentId: "social",
+    scopes: ["openid", "profile", "w_member_social"],
+    description:
+      "Publish to LinkedIn. Available but wired into no loop by default — publishing to a real account is opt-in.",
+    writes: true,
   },
 ];
 
@@ -73,11 +111,46 @@ interface StoredToken {
 type TokenStore = Record<string, StoredToken>;
 
 const TOKENS = "connections";
-const OAUTH_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
-const OAUTH_TOKEN = "https://oauth2.googleapis.com/token";
+interface ProviderConfig {
+  authUrl: string;
+  tokenUrl: string;
+  clientId?: string;
+  clientSecret?: string;
+  /** Extra params the provider needs on the consent URL. */
+  extraAuthParams: Record<string, string>;
+}
 
+function providerConfig(provider: OAuthProvider): ProviderConfig {
+  return provider === "google"
+    ? {
+        authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+        // Without offline access the connection dies silently within the hour.
+        extraAuthParams: {
+          access_type: "offline",
+          prompt: "consent",
+          include_granted_scopes: "true",
+        },
+      }
+    : {
+        authUrl: "https://www.linkedin.com/oauth/v2/authorization",
+        tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
+        clientId: process.env.LINKEDIN_CLIENT_ID,
+        clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
+        extraAuthParams: {},
+      };
+}
+
+export function providerConfigured(provider: OAuthProvider): boolean {
+  const config = providerConfig(provider);
+  return Boolean(config.clientId && config.clientSecret);
+}
+
+/** Kept for callers that only care about the Google half. */
 export function oauthConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET);
+  return providerConfigured("google");
 }
 
 function redirectUri(): string {
@@ -97,20 +170,19 @@ function redirectUri(): string {
  */
 export function authorizeUrl(connectorId: ConnectorId, state: string): string | null {
   const spec = CONNECTORS_BY_ID[connectorId];
-  if (!spec || !oauthConfigured()) return null;
+  if (!spec || !providerConfigured(spec.provider)) return null;
 
+  const config = providerConfig(spec.provider);
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_OAUTH_CLIENT_ID as string,
+    client_id: config.clientId as string,
     redirect_uri: redirectUri(),
     response_type: "code",
-    access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
     scope: spec.scopes.join(" "),
     state,
+    ...config.extraAuthParams,
   });
 
-  return `${OAUTH_AUTH}?${params.toString()}`;
+  return `${config.authUrl}?${params.toString()}`;
 }
 
 /** Opaque state so the callback can prove which connector it belongs to. */
@@ -127,16 +199,21 @@ export async function exchangeCode(
   connectorId: ConnectorId,
   code: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!oauthConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID/SECRET not set" };
+  const spec = CONNECTORS_BY_ID[connectorId];
+  if (!spec) return { ok: false, error: "unknown connector" };
+  if (!providerConfigured(spec.provider)) {
+    return { ok: false, error: `${spec.provider} OAuth client id/secret not set` };
+  }
+  const config = providerConfig(spec.provider);
 
   try {
-    const response = await fetch(OAUTH_TOKEN, {
+    const response = await fetch(config.tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: process.env.GOOGLE_OAUTH_CLIENT_ID as string,
-        client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET as string,
+        client_id: config.clientId as string,
+        client_secret: config.clientSecret as string,
         redirect_uri: redirectUri(),
         grant_type: "authorization_code",
       }),
@@ -174,15 +251,17 @@ export async function exchangeCode(
 }
 
 async function refresh(connectorId: ConnectorId, token: StoredToken): Promise<StoredToken | null> {
-  if (!token.refreshToken || !oauthConfigured()) return null;
+  const spec = CONNECTORS_BY_ID[connectorId];
+  if (!token.refreshToken || !spec || !providerConfigured(spec.provider)) return null;
+  const config = providerConfig(spec.provider);
 
-  const response = await fetch(OAUTH_TOKEN, {
+  const response = await fetch(config.tokenUrl, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       refresh_token: token.refreshToken,
-      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID as string,
-      client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET as string,
+      client_id: config.clientId as string,
+      client_secret: config.clientSecret as string,
       grant_type: "refresh_token",
     }),
   });
@@ -229,26 +308,29 @@ export async function disconnect(connectorId: ConnectorId): Promise<void> {
 export interface ConnectorStatus {
   id: ConnectorId;
   name: string;
+  provider: OAuthProvider;
   description: string;
   ownerAgentId: string;
   connected: boolean;
-  /** True when OAuth credentials exist, so connecting is even possible. */
+  /** True when this provider's OAuth credentials exist. */
   available: boolean;
+  writes: boolean;
   connectedAt?: number;
   scopes: string[];
 }
 
 export async function statuses(): Promise<ConnectorStatus[]> {
   const tokens = await readCollection<TokenStore>(TOKENS, {});
-  const available = oauthConfigured();
 
   return CONNECTORS.map((spec) => ({
     id: spec.id,
     name: spec.name,
+    provider: spec.provider,
     description: spec.description,
     ownerAgentId: spec.ownerAgentId,
     connected: Boolean(tokens[spec.id]),
-    available,
+    available: providerConfigured(spec.provider),
+    writes: spec.writes,
     connectedAt: tokens[spec.id]?.connectedAt,
     scopes: spec.scopes,
   }));
@@ -265,14 +347,15 @@ async function googleFetch<T>(
   url: string,
   init?: RequestInit,
 ): Promise<CallOutcome<T>> {
+  const spec = CONNECTORS_BY_ID[connectorId];
   const token = await accessToken(connectorId);
   if (!token) {
     return {
       ok: false,
       needsConnection: true,
-      error: oauthConfigured()
-        ? `${CONNECTORS_BY_ID[connectorId].name} is not connected.`
-        : "Google OAuth is not configured (GOOGLE_OAUTH_CLIENT_ID/SECRET).",
+      error: providerConfigured(spec?.provider ?? "google")
+        ? `${spec?.name ?? connectorId} is not connected.`
+        : `${spec?.provider ?? "google"} OAuth is not configured.`,
     };
   }
 
@@ -437,4 +520,115 @@ export async function createMailDraft(input: {
     "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
     { method: "POST", body: JSON.stringify({ message: { raw } }) },
   );
+}
+
+/**
+ * Create a deck from an approved outline.
+ *
+ * Two calls: create the presentation, then one batchUpdate that adds every
+ * slide and fills its placeholders. Batching matters — one request per slide
+ * would half-build a deck if the third one failed.
+ */
+export async function createSlideDeck(input: {
+  title: string;
+  slides: Array<{ title: string; body: string }>;
+}): Promise<CallOutcome<{ id: string; url: string }>> {
+  const created = await googleFetch<{ presentationId: string }>(
+    "google-slides",
+    "https://slides.googleapis.com/v1/presentations",
+    { method: "POST", body: JSON.stringify({ title: input.title }) },
+  );
+  if (!created.ok) return created;
+
+  const presentationId = created.data.presentationId;
+  const requests: unknown[] = [];
+
+  input.slides.forEach((slide, index) => {
+    const slideId = `thor_slide_${index}`;
+    const titleId = `thor_title_${index}`;
+    const bodyId = `thor_body_${index}`;
+
+    requests.push({
+      createSlide: {
+        objectId: slideId,
+        slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" },
+        placeholderIdMappings: [
+          { layoutPlaceholder: { type: "TITLE" }, objectId: titleId },
+          { layoutPlaceholder: { type: "BODY" }, objectId: bodyId },
+        ],
+      },
+    });
+    requests.push({ insertText: { objectId: titleId, text: slide.title } });
+    if (slide.body) requests.push({ insertText: { objectId: bodyId, text: slide.body } });
+  });
+
+  const updated = await googleFetch<unknown>(
+    "google-slides",
+    `https://slides.googleapis.com/v1/presentations/${presentationId}:batchUpdate`,
+    { method: "POST", body: JSON.stringify({ requests }) },
+  );
+  if (!updated.ok) return updated;
+
+  return {
+    ok: true,
+    data: {
+      id: presentationId,
+      url: `https://docs.google.com/presentation/d/${presentationId}/edit`,
+    },
+  };
+}
+
+/**
+ * Publish to LinkedIn.
+ *
+ * Deliberately not wired into any seeded loop. Every other write in this file
+ * either lands somewhere private (a calendar, a draft) or is trivially
+ * reversible; a LinkedIn post is neither. It is available for a loop that
+ * explicitly opts in, downstream of a gate.
+ */
+export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: string }>> {
+  const token = await accessToken("linkedin");
+  if (!token) {
+    return {
+      ok: false,
+      needsConnection: true,
+      error: providerConfigured("linkedin")
+        ? "LinkedIn is not connected."
+        : "LinkedIn OAuth is not configured (LINKEDIN_CLIENT_ID/SECRET).",
+    };
+  }
+
+  try {
+    // The member URN comes from the OIDC userinfo endpoint.
+    const who = await fetch("https://api.linkedin.com/v2/userinfo", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!who.ok) return { ok: false, error: `userinfo ${who.status}` };
+    const { sub } = (await who.json()) as { sub: string };
+
+    const response = await fetch("https://api.linkedin.com/rest/posts", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "LinkedIn-Version": process.env.LINKEDIN_API_VERSION ?? "202405",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+      body: JSON.stringify({
+        author: `urn:li:person:${sub}`,
+        commentary: text,
+        visibility: "PUBLIC",
+        distribution: { feedDistribution: "MAIN_FEED" },
+        lifecycleState: "PUBLISHED",
+      }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, error: `linkedin ${response.status}: ${(await response.text()).slice(0, 200)}` };
+    }
+
+    return { ok: true, data: { id: response.headers.get("x-restli-id") ?? "posted" } };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "post failed" };
+  }
 }

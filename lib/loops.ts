@@ -16,11 +16,12 @@
  */
 
 import { callRole, parseJson, type ModelRole } from "./models";
+import { TOOLS, toolInstruction } from "./tools";
 import { recall, renderForPrompt as renderMemory } from "./memory";
 import { getProfile, renderForPrompt as renderStyle } from "./style";
 import { id, mutate, readCollection } from "./store";
 
-export type StepKind = "generate" | "gate" | "act" | "observe";
+export type StepKind = "generate" | "gate" | "act" | "observe" | "tool";
 
 export interface LoopStep {
   id: string;
@@ -29,6 +30,8 @@ export interface LoopStep {
   role: ModelRole;
   /** What this step asks the model to do. Receives prior artefacts. */
   instruction: string;
+  /** For `tool` steps: the key in TOOLS this step executes. */
+  tool?: string;
 }
 
 export interface LoopDefinition {
@@ -173,7 +176,16 @@ export const LOOPS: LoopDefinition[] = [
         kind: "act",
         role: "quick",
         instruction:
-          "Lay the approved posts across the week with a publish time for each and a one-line reason for the ordering.",
+          "Lay the approved posts across the week with an explicit publish date and time for each (include the year) and a one-line reason for the ordering.",
+      },
+      {
+        id: "place",
+        name: "Place on calendar",
+        kind: "tool",
+        role: "quick",
+        tool: "calendar.schedule",
+        instruction:
+          "Put each scheduled post on the operator's calendar at its publish time.",
       },
     ],
   },
@@ -206,7 +218,16 @@ export const LOOPS: LoopDefinition[] = [
         name: "Review",
         kind: "gate",
         role: "quick",
-        instruction: "Hold for the operator's GO before sending.",
+        instruction: "Hold for the operator's GO before anything is saved.",
+      },
+      {
+        id: "draft",
+        name: "Save draft",
+        kind: "tool",
+        role: "quick",
+        tool: "gmail.draft",
+        instruction:
+          "Save the approved reply as a Gmail draft. It is never sent automatically.",
       },
     ],
   },
@@ -356,6 +377,59 @@ export async function advance(runId: string): Promise<LoopRun> {
     if (step.kind === "gate") {
       const updated = await patchRun(runId, { status: "awaiting-go" });
       return updated ?? run;
+    }
+
+    // ── Tool steps ─────────────────────────────────────────────────────
+    // Two beats: the model turns the approved work into structured arguments,
+    // then those arguments are validated and executed against a real
+    // connector. The model never calls the API itself.
+    if (step.kind === "tool") {
+      const tool = step.tool ? TOOLS[step.tool] : undefined;
+      if (!tool) {
+        const failed = await patchRun(runId, {
+          status: "failed",
+          error: `Step "${step.name}" names an unknown tool: ${step.tool}`,
+          endedAt: Date.now(),
+        });
+        return failed ?? run;
+      }
+
+      const args = await callRole(step.role, {
+        system: toolInstruction(tool),
+        messages: [{ role: "user", content: priorWork(run) }],
+        json: true,
+      });
+
+      if (!args.live) {
+        const failed = await patchRun(runId, {
+          status: "failed",
+          error: args.error ?? "Model unavailable",
+          endedAt: Date.now(),
+        });
+        return failed ?? run;
+      }
+
+      const parsed = parseJson<unknown>(args.text) ?? {};
+      const outcome = await tool.run(parsed);
+
+      const artifact: Artifact = {
+        stepId: step.id,
+        stepName: step.name,
+        text: outcome.summary,
+        model: `${args.spec.label} → ${tool.name}`,
+        live: outcome.ok,
+        at: Date.now(),
+      };
+
+      // A tool that could not act does not fail the run — the work upstream
+      // is still valid and the artefact records exactly what went wrong.
+      const updatedRun = await patchRun(runId, {
+        artifacts: [...run.artifacts, artifact],
+        stepIndex: run.stepIndex + 1,
+      });
+      if (!updatedRun) break;
+      run = updatedRun;
+      continue;
     }
 
     const system = await buildSystemPrompt(loop, run, step);

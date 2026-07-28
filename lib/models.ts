@@ -420,3 +420,56 @@ export async function streamRole(
     };
   }
 }
+
+// ── Images ───────────────────────────────────────────────────────────────
+
+/**
+ * Image generation.
+ *
+ * From the source description: "branded graphics are rendered as code, while
+ * photos use Gemini's image model or Imagen." This covers the photo path;
+ * the render-as-code path is the existing HTML/SVG surfaces, which is why
+ * there is no template engine here.
+ *
+ * Returns a data URL so callers never have to manage a file, and the caller
+ * decides whether to persist it.
+ */
+export async function generateImage(
+  prompt: string,
+): Promise<{ ok: true; dataUrl: string; model: string } | { ok: false; error: string }> {
+  const key = keyFor("google");
+  if (!key) return { ok: false, error: "No GOOGLE_API_KEY configured" };
+
+  const model = process.env.THOR_MODEL_IMAGE ?? "imagen-4.0-generate-001";
+
+  try {
+    const response = await fetch(`${GOOGLE_BASE}/v1beta/models/${model}:predict`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        instances: [{ prompt }],
+        parameters: { sampleCount: 1, aspectRatio: process.env.THOR_IMAGE_ASPECT ?? "1:1" },
+      }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, error: `imagen ${response.status}: ${(await response.text()).slice(0, 200)}` };
+    }
+
+    const data = (await response.json()) as {
+      predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string }>;
+    };
+    const prediction = data.predictions?.[0];
+    if (!prediction?.bytesBase64Encoded) {
+      return { ok: false, error: "the model returned no image" };
+    }
+
+    return {
+      ok: true,
+      model,
+      dataUrl: `data:${prediction.mimeType ?? "image/png"};base64,${prediction.bytesBase64Encoded}`,
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "image request failed" };
+  }
+}

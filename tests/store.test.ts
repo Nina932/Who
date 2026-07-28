@@ -81,3 +81,38 @@ describe("id", () => {
     assert.equal(ids.size, 5000);
   });
 });
+
+describe("drivers", () => {
+  it("defaults to the filesystem when no Redis is configured", () => {
+    assert.equal(store.driverName(), "fs");
+  });
+
+  it("works against a swapped-in driver, so serverless has a real option", async () => {
+    // Proves the driver seam: nothing above this file knows which backend it
+    // is talking to. The Redis driver is the same shape.
+    const backing = new Map<string, string>();
+    store.setDriver({
+      name: "test-kv",
+      async read(collection) {
+        return backing.get(collection) ?? null;
+      },
+      async write(collection, serialised) {
+        backing.set(collection, serialised);
+      },
+      async remove(collection) {
+        backing.delete(collection);
+      },
+    });
+
+    assert.equal(store.driverName(), "test-kv");
+    await store.mutate<string[], null>("swapped", [], (current) => ({
+      next: [...current, "value"],
+      result: null,
+    }));
+    assert.deepEqual(await store.readCollection<string[]>("swapped", []), ["value"]);
+    assert.ok(backing.has("swapped"), "the swapped driver received the write");
+
+    await store.dropCollection("swapped");
+    assert.deepEqual(await store.readCollection<string[]>("swapped", []), []);
+  });
+});

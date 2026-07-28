@@ -165,15 +165,24 @@ voice-first product — the original justification for awaiting it was wrong.
 
 ## 6. Persistence
 
-[`lib/store.ts`](../lib/store.ts). Flat JSON under `.thor/`, written
-temp-then-rename so a crash can't leave a half-written file, and serialised
-through a per-collection promise chain because Next route handlers run
-concurrently and would otherwise lose writes.
+[`lib/store.ts`](../lib/store.ts). Two drivers behind one seam, chosen once at
+load:
 
-```
-.thor/loop-runs.json  .thor/loop-learnings.json
-.thor/memory.json     .thor/style-profile.json  .thor/style-samples.json
-```
+| Driver | When |
+| --- | --- |
+| `fs` (default) | Flat JSON under `.thor/`, temp-then-rename so a crash cannot leave a partial file. Deliberately readable — a system claiming durable memory should let you audit it with `cat`. |
+| `redis` | Upstash over its REST API — plain `fetch`, no client library, no TCP socket, so it works in any runtime. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. |
+
+The filesystem driver is correct for a long-lived server and **wrong on
+serverless**, where the filesystem is per-instance and ephemeral. That is what
+the Redis driver is for.
+
+Writes are serialised through a per-collection promise chain, because route
+handlers run concurrently and a naive read-modify-write loses updates.
+
+**A named limit:** that chain is per-process. Behind several instances sharing
+one Redis it is not enough, and a compare-and-set would be needed. Single
+instance is fine; horizontal scale is not yet.
 
 ## 7. The scheduler
 
@@ -207,11 +216,23 @@ creation, Gmail read and draft creation.
 
 Scopes are requested narrowly on purpose:
 
-| Connector | Scope | Why |
-| --- | --- | --- |
-| Drive | `drive.readonly` | An agent that can delete your files is a different risk |
-| Calendar | `calendar.events` | Needed to place approved work |
-| Email | `gmail.readonly` + `gmail.compose` | **compose, not send** — Thor drafts, a human presses send |
+| Connector | Provider | Scope | Why |
+| --- | --- | --- | --- |
+| Drive | Google | `drive.readonly` | An agent that can delete your files is a different risk |
+| Calendar | Google | `calendar.events` | Needed to place approved work |
+| Email | Google | `gmail.readonly` + `gmail.compose` | **compose, not send** — Thor drafts, a human presses send |
+| Slides | Google | `presentations` + `drive.file` | `drive.file` only touches files Thor created |
+| LinkedIn | LinkedIn | `w_member_social` | Publishing — **wired into no loop by default** |
+
+LinkedIn is the deliberate exception. Every other write lands somewhere private
+(a calendar, a draft) or is trivially reversible; a public post is neither, so
+it stays opt-in rather than shipping switched on. A test asserts no seeded loop
+uses it.
+
+Image generation (`generateImage` in `lib/models.ts`) covers the "photos via
+Imagen" half of the described stack; the "branded graphics rendered as code"
+half is the existing HTML/SVG surfaces, which is why there is no template
+engine.
 
 `access_type=offline` with `prompt=consent`, because without a refresh token the
 connection dies silently within the hour.
@@ -227,7 +248,52 @@ UI says exactly that and the connect endpoint refuses:
 {"error":"Google OAuth is not configured. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET."}
 ```
 
-## 9. Write protection
+## 9. Tools — where a loop touches the world
+
+[`lib/tools.ts`](../lib/tools.ts). Connectors worked and loops worked, and
+nothing joined them, so an approved post was never actually placed anywhere.
+
+A tool step runs in two beats:
+
+1. the step's model turns the run's artefacts into structured JSON
+2. that JSON is **validated here**, then executed against a real connector
+
+The model never calls the API. It only proposes arguments; this file decides
+whether they are well-formed. A hallucinated field becomes a validation error
+rather than a bad calendar entry.
+
+Verified end to end — Content Engine, past the gate:
+
+```
+Mine               via Gemini Flash
+Draft              via Gemini Pro
+Schedule           via Gemini Flash
+Place on calendar  via Gemini Flash → calendar.schedule
+
+  Nothing was placed on the calendar.
+  Skipped:
+  - "Post: voice rebuild" — google OAuth is not configured.
+  - "Post: loops engine"  — missing or past start time
+```
+
+The first was well-formed and reached the connector, which reported the real
+reason. The second was rejected *before* any call — an agent booking into last
+week is a bug that would otherwise ship silently as a calendar entry nobody
+sees.
+
+Two invariants are enforced by test rather than by convention: every tool step
+sits **after** its loop's gate, and no seeded loop publishes to LinkedIn.
+
+| Tool | Connector | Does |
+| --- | --- | --- |
+| `calendar.schedule` | Calendar | Places approved posts at their publish times |
+| `gmail.draft` | Email | Saves the approved reply as a draft — never sends |
+| `slides.deck` | Slides | Turns an approved outline into a deck |
+
+A tool that cannot act does **not** fail the run: the work upstream is still
+valid, and the artefact records exactly what went wrong.
+
+## 10. Write protection
 
 [`lib/guard.ts`](../lib/guard.ts). The mutating endpoints approve autonomous
 work, delete memory and spend money on model calls, and had no check at all.
@@ -240,9 +306,22 @@ $ curl -X POST /api/memory -H 'origin: https://evil.example' -d '{"text":"x"}'
 {"error":"Cross-origin writes are refused."}
 ```
 
+## Verifying model IDs
+
+```bash
+npm run verify:models
+```
+
+The IDs in `lib/models.ts` were written from memory and never called. A wrong
+one fails at the worst moment — mid-conversation, or halfway through an
+unattended loop — and surfaces as "the stack is down" rather than "that model
+does not exist". One minimal call per role, non-zero exit if any configured
+role is broken, so it can gate a deploy. Roles whose provider has no key are
+reported as skipped: a missing key is a choice, a wrong ID is a bug.
+
 ## Tests
 
-`npm test` — 61 tests on the pure core, no API keys, via Node's built-in runner.
+`npm test` — 75 tests on the pure core, no API keys, via Node's built-in runner.
 
 They earned their keep on the first run by catching a **live routing bug**:
 `"what is our runway looking like"` routed to the Researcher rather than
@@ -253,9 +332,10 @@ enough to break a tie, never enough to beat a real domain term.
 
 Covered: attendance scoring and the near-scorer cutoff, model routing and the
 one-way escalation to Opus, the loop gate (including the regression that
-rejection must be terminal), store write serialisation under 50 concurrent
-mutators, style metrics learned from real diffs, cadence arithmetic, and the
-Phoenix combine formula's negative branch.
+rejection must be terminal), tool argument validation and the two structural
+invariants above, the store driver seam, write serialisation under 50
+concurrent mutators, style metrics learned from real diffs, cadence arithmetic,
+and the Phoenix combine formula's negative branch.
 
 ## Fixed after review
 
@@ -301,10 +381,13 @@ was exercised against a local stand-in.
 Named honestly, because the gap between this and the real Apex is all
 integration work:
 
-- **LinkedIn, Chat, Google Slides/Sheets** are still unbuilt. Google Drive,
-  Calendar and Gmail are wired; the rest are not.
-- **No connector-backed loop step.** The connectors work, but no loop step calls
-  them yet — so an approved post is not yet auto-placed on the calendar.
+- **Chat and Google Sheets** are unbuilt. Drive, Calendar, Gmail, Slides and
+  LinkedIn are wired. "Chat" in the source roster is ambiguous — Slack, Google
+  Chat and WhatsApp are three different integrations and nothing indicates
+  which.
+- **Horizontal scale.** The write chain is per-process; see Persistence.
+- **Model IDs are unverified against a live endpoint** in this environment —
+  `npm run verify:models` is the tool, but it needs real keys.
 
 - **No image generation.** The described "branded graphics rendered as code /
   photos via Imagen" path is not implemented.

@@ -4,55 +4,149 @@ import path from "node:path";
 /**
  * Durable state.
  *
- * Thor claims to *learn* — to keep facts, to pick up your style, to run loops
+ * Thor claims to *learn* — to keep facts, pick up your style, and run loops
  * that get better each time. None of that is true if state dies with the
- * process, so everything lands on disk under `.thor/`.
+ * process, so everything is persisted.
  *
- * Deliberately flat JSON, not a database: the whole point is that you can open
- * `.thor/memory.json` and read exactly what the machine believes about you.
- * A system that claims durable memory should let you audit it with `cat`.
+ * Two drivers, because the right answer depends on where this runs:
+ *
+ *   fs      flat JSON under `.thor/` — the default, and deliberately readable.
+ *           A system claiming durable memory should let you audit it with
+ *           `cat`. Correct for a long-lived server; wrong on serverless, where
+ *           the filesystem is per-instance and ephemeral.
+ *   redis   Upstash Redis over its REST API, chosen because it needs no TCP
+ *           socket and no client library — plain `fetch`, so it works in any
+ *           runtime. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.
+ *
+ * The driver is picked once at module load. Collections are whole JSON
+ * documents in both cases, so the semantics are identical and nothing above
+ * this file knows which is in use.
  */
 
-const ROOT = process.env.THOR_DATA_DIR ?? path.join(process.cwd(), ".thor");
-
-async function ensureRoot(): Promise<void> {
-  await fs.mkdir(ROOT, { recursive: true });
+export interface StoreDriver {
+  readonly name: string;
+  read(collection: string): Promise<string | null>;
+  write(collection: string, serialised: string): Promise<void>;
+  remove(collection: string): Promise<void>;
 }
 
-function fileFor(collection: string): string {
-  // Collection names are internal constants, but never build a path from
-  // unsanitised input.
-  const safe = collection.replace(/[^a-z0-9_-]/gi, "");
-  return path.join(ROOT, `${safe}.json`);
+// ── Filesystem ───────────────────────────────────────────────────────────
+
+function createFsDriver(root: string): StoreDriver {
+  const fileFor = (collection: string) =>
+    // Collection names are internal constants, but never build a path from
+    // unsanitised input.
+    path.join(root, `${collection.replace(/[^a-z0-9_-]/gi, "")}.json`);
+
+  return {
+    name: "fs",
+    async read(collection) {
+      try {
+        return await fs.readFile(fileFor(collection), "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    },
+    async write(collection, serialised) {
+      await fs.mkdir(root, { recursive: true });
+      const target = fileFor(collection);
+      // Write-then-rename so a crash mid-write cannot leave a partial file.
+      const temp = `${target}.${process.pid}.tmp`;
+      await fs.writeFile(temp, serialised, "utf8");
+      await fs.rename(temp, target);
+    },
+    async remove(collection) {
+      await fs.rm(fileFor(collection), { force: true });
+    },
+  };
 }
+
+// ── Upstash Redis (REST) ─────────────────────────────────────────────────
+
+function createRedisDriver(url: string, token: string): StoreDriver {
+  const key = (collection: string) => `thor:${collection.replace(/[^a-z0-9_-]/gi, "")}`;
+
+  const command = async (parts: string[]): Promise<unknown> => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(parts),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`upstash ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    }
+    return (await response.json()) as { result?: unknown };
+  };
+
+  return {
+    name: "redis",
+    async read(collection) {
+      const body = (await command(["GET", key(collection)])) as { result?: string | null };
+      return body.result ?? null;
+    },
+    async write(collection, serialised) {
+      await command(["SET", key(collection), serialised]);
+    },
+    async remove(collection) {
+      await command(["DEL", key(collection)]);
+    },
+  };
+}
+
+function selectDriver(): StoreDriver {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (url && token) return createRedisDriver(url, token);
+  return createFsDriver(process.env.THOR_DATA_DIR ?? path.join(process.cwd(), ".thor"));
+}
+
+let driver: StoreDriver = selectDriver();
+
+/** Which driver is live — surfaced so the UI can warn about ephemeral state. */
+export function driverName(): string {
+  return driver.name;
+}
+
+/** Swap the driver. Exists for tests; production selects once at load. */
+export function setDriver(next: StoreDriver): void {
+  driver = next;
+}
+
+// ── Collection access ────────────────────────────────────────────────────
 
 export async function readCollection<T>(collection: string, fallback: T): Promise<T> {
   try {
-    const raw = await fs.readFile(fileFor(collection), "utf8");
+    const raw = await driver.read(collection);
+    if (raw === null) return fallback;
     return JSON.parse(raw) as T;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return fallback;
-    // A corrupt file should not take the cockpit down with it.
+    // A corrupt document or an unreachable backend should not take the
+    // cockpit down with it.
     console.error(`store: could not read ${collection}`, error);
     return fallback;
   }
 }
 
 export async function writeCollection<T>(collection: string, value: T): Promise<void> {
-  await ensureRoot();
-  const target = fileFor(collection);
-  // Write-then-rename so a crash mid-write cannot leave a half-written file.
-  const temp = `${target}.${process.pid}.tmp`;
-  await fs.writeFile(temp, JSON.stringify(value, null, 2), "utf8");
-  await fs.rename(temp, target);
+  await driver.write(collection, JSON.stringify(value, null, 2));
+}
+
+export async function dropCollection(collection: string): Promise<void> {
+  await driver.remove(collection);
 }
 
 /**
  * Read-modify-write under a per-collection promise chain.
  *
- * Next.js route handlers run concurrently in one process, so two requests
- * mutating the same collection would otherwise interleave and lose writes.
+ * Route handlers run concurrently in one process, so a naive
+ * read-modify-write would interleave and silently lose updates.
+ *
+ * The chain is per-process. On a single long-lived server that is the whole
+ * story; behind several instances sharing Redis it is not, and a compare-and-
+ * set would be needed. That is a real limit and it is named in docs/ENGINE.md
+ * rather than papered over.
  */
 const chains = new Map<string, Promise<unknown>>();
 
@@ -78,7 +172,7 @@ export function mutate<T, R>(
   return run;
 }
 
-/** Monotonic-ish id that stays readable in the JSON files. */
+/** Monotonic-ish id that stays readable in the stored documents. */
 export function id(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
