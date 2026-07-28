@@ -175,6 +175,88 @@ concurrently and would otherwise lose writes.
 .thor/memory.json     .thor/style-profile.json  .thor/style-samples.json
 ```
 
+## 7. The scheduler
+
+[`lib/scheduler.ts`](../lib/scheduler.ts). Cadences were declared and nothing
+fired them, so "autonomous" meant "on demand". `nextDue` parses the cadence
+strings the loops already carry — `"Mondays, 07:00"`, `"Hourly"`,
+`"Every 15 minutes"`, `"Daily, 09:00"`, `"On arrival"` — and an unrecognised
+cadence returns null, which means never auto-fire. Failing in that direction is
+the safe one.
+
+Verified from a Tuesday:
+
+```
+weekly-business-review   next: Mon 03 Aug 07:00
+content-engine           next: Mon 03 Aug 07:00
+inbound-to-pipeline      next: event-driven
+```
+
+`tick()` advances a loop's next slot **before** starting its run, so a failing
+loop moves to its next slot instead of retrying every tick and becoming a hot
+loop. Two ways to drive it: an in-process timer (`THOR_SCHEDULER=on`) for a
+long-lived server, or `POST /api/scheduler {"action":"tick"}` for cron on hosts
+where background timers do not survive. Both call the same idempotent `tick()`.
+
+## 8. Connectors
+
+[`lib/connectors.ts`](../lib/connectors.ts). A real Google OAuth
+authorisation-code flow with refresh, tokens persisted through the same store,
+and real API calls on top: Drive file listing, Calendar read and event
+creation, Gmail read and draft creation.
+
+Scopes are requested narrowly on purpose:
+
+| Connector | Scope | Why |
+| --- | --- | --- |
+| Drive | `drive.readonly` | An agent that can delete your files is a different risk |
+| Calendar | `calendar.events` | Needed to place approved work |
+| Email | `gmail.readonly` + `gmail.compose` | **compose, not send** — Thor drafts, a human presses send |
+
+`access_type=offline` with `prompt=consent`, because without a refresh token the
+connection dies silently within the hour.
+
+Every connector carries a **Probe** button that makes one real API call.
+"Connected" should mean the last request actually worked, not that a token
+exists in a file.
+
+Needs `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`. Without them the
+UI says exactly that and the connect endpoint refuses:
+
+```
+{"error":"Google OAuth is not configured. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET."}
+```
+
+## 9. Write protection
+
+[`lib/guard.ts`](../lib/guard.ts). The mutating endpoints approve autonomous
+work, delete memory and spend money on model calls, and had no check at all.
+Two layers: cross-origin writes are refused outright, and when
+`THOR_API_SECRET` is set every mutating call must present it. Reads stay open so
+the cockpit renders.
+
+```
+$ curl -X POST /api/memory -H 'origin: https://evil.example' -d '{"text":"x"}'
+{"error":"Cross-origin writes are refused."}
+```
+
+## Tests
+
+`npm test` — 61 tests on the pure core, no API keys, via Node's built-in runner.
+
+They earned their keep on the first run by catching a **live routing bug**:
+`"what is our runway looking like"` routed to the Researcher rather than
+Finance, because the generic stem `"what is"` earned the multi-word specificity
+bonus and outscored the domain term `"runway"`. Any question opening with
+"what is" was being hijacked. Generic interrogative stems now score a flat 0.4 —
+enough to break a tie, never enough to beat a real domain term.
+
+Covered: attendance scoring and the near-scorer cutoff, model routing and the
+one-way escalation to Opus, the loop gate (including the regression that
+rejection must be terminal), store write serialisation under 50 concurrent
+mutators, style metrics learned from real diffs, cadence arithmetic, and the
+Phoenix combine formula's negative branch.
+
 ## Fixed after review
 
 Four defects found by grilling the build, each verified fixed:
@@ -219,11 +301,11 @@ was exercised against a local stand-in.
 Named honestly, because the gap between this and the real Apex is all
 integration work:
 
-- **No real connectors.** Drive, Email, Calendar, Chat, LinkedIn, Google
-  Slides/Sheets are in the roster and inert. Nothing in the source material
-  reveals how the original authenticates or writes to them.
-- **No scheduler.** Cadences are declared and loops run on demand. A cron
-  trigger firing `startRun` is the missing piece, not a redesign.
+- **LinkedIn, Chat, Google Slides/Sheets** are still unbuilt. Google Drive,
+  Calendar and Gmail are wired; the rest are not.
+- **No connector-backed loop step.** The connectors work, but no loop step calls
+  them yet — so an approved post is not yet auto-placed on the calendar.
+
 - **No image generation.** The described "branded graphics rendered as code /
   photos via Imagen" path is not implemented.
 - **Vision role is routed but untested** — there is no upload surface yet.

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardMutation } from "@/lib/guard";
 import { AGENTS_BY_ID, FAMILY_LABEL } from "@/lib/agents";
 import { learnFrom, recall, renderForPrompt as renderMemory } from "@/lib/memory";
 import { routeTurn, stackStatus, streamRole } from "@/lib/models";
@@ -46,6 +47,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = guardMutation(request);
+  if (blocked) return blocked.response;
+
   let body: ThorRequest;
   try {
     body = (await request.json()) as ThorRequest;

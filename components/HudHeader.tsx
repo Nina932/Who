@@ -60,7 +60,34 @@ export interface HudHeaderProps {
   local: boolean;
 }
 
+interface Weather {
+  temperature: number;
+  conditions: string;
+  live: boolean;
+}
+
 export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeaderProps) {
+  // Weather was a hardcoded constant presented as a live reading. It is now
+  // fetched; if the fetch fails the reading is dimmed rather than faked.
+  const [weather, setWeather] = useState<Weather>({
+    temperature: AMBIENT.temperature,
+    conditions: AMBIENT.conditions,
+    live: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/ambient")
+      .then((r) => r.json())
+      .then((data: Weather) => {
+        if (!cancelled) setWeather(data);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // The clock is client-only; rendering it on the server would guarantee a
   // hydration mismatch within a minute of the page being built.
   const [now, setNow] = useState<Date | null>(null);
@@ -114,10 +141,15 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               fontFamily: "var(--font-display)",
             }}
           >
-            {AMBIENT.temperature}°C
+            {weather.temperature}°C
           </div>
-          <div className="label mt-2">
-            {AMBIENT.city} · {AMBIENT.conditions}
+          <div
+            className="label mt-2"
+            title={weather.live ? undefined : "Live reading unavailable — showing the configured default"}
+            style={weather.live ? undefined : { opacity: 0.55 }}
+          >
+            {AMBIENT.city} · {weather.conditions}
+            {weather.live ? "" : " · not live"}
           </div>
         </div>
 
@@ -151,6 +183,12 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
             >
               Loops
+            </Link>
+            <Link
+              href="/connect"
+              className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
+            >
+              Connect
             </Link>
             <Link
               href="/phoenix"

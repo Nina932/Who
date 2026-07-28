@@ -38,6 +38,20 @@ export interface AttendanceDecision {
 const DEFAULT_HOST = "chief-of-staff";
 
 /**
+ * Low-information phrases that must not earn the multi-word bonus.
+ *
+ * The bonus exists to reward *specificity* — "pull request" really is a
+ * stronger signal than "test". But generic interrogative stems are long and
+ * multi-word while carrying almost no domain information, so they were
+ * outscoring the actual subject: "what is our runway looking like" routed to
+ * the Researcher on "what is" instead of to Finance on "runway".
+ */
+const GENERIC = new Set([
+  "what is", "who is", "find out", "look up", "should we", "should i",
+  "how many", "data on", "build it", "note that", "you said", "last time",
+]);
+
+/**
  * Score every summonable agent against an utterance.
  * Longer domain terms count for more — "pull request" is a stronger signal
  * than "test".
@@ -54,8 +68,13 @@ export function scoreAgents(utterance: string): Map<string, { score: number; hit
 
     for (const term of agent.domains) {
       if (text.includes(term)) {
-        // Multi-word and longer terms are more specific, so weight them up.
-        score += 1 + term.length / 12 + (term.includes(" ") ? 0.75 : 0);
+        if (GENERIC.has(term)) {
+          // Enough to break a tie, never enough to beat a domain term.
+          score += 0.4;
+        } else {
+          // Multi-word and longer terms are more specific, so weight them up.
+          score += 1 + term.length / 12 + (term.includes(" ") ? 0.75 : 0);
+        }
         hits.push(term);
       }
     }

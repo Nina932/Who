@@ -2,13 +2,15 @@
   "name": "thor",
   "version": "0.1.0",
   "private": true,
-  "description": "Thor — an autonomous AI co-founder cockpit for solo operators.",
+  "description": "Thor \u2014 an autonomous AI co-founder cockpit for solo operators.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:watch": "node --import tsx --test --watch tests/*.test.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -26,6 +28,7 @@
     "@types/react": "^19.1.1",
     "@types/react-dom": "^19.1.1",
     "tailwindcss": "^4.1.13",
+    "tsx": "^4.23.1",
     "typescript": "^5.8.3"
   }
 }

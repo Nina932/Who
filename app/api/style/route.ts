@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardMutation } from "@/lib/guard";
 import { getProfile, getSamples, moreMyStyle, recordEdit } from "@/lib/style";
 
 /**
@@ -20,6 +21,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = guardMutation(request);
+  if (blocked) return blocked.response;
+
   const body = (await request.json().catch(() => ({}))) as {
     action?: unknown;
     draft?: unknown;

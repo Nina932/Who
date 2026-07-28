@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardMutation } from "@/lib/guard";
 import {
   LOOPS,
   advance,
@@ -30,6 +31,9 @@ interface Body {
 }
 
 export async function POST(request: Request) {
+  const blocked = guardMutation(request);
+  if (blocked) return blocked.response;
+
   let body: Body;
   try {
     body = (await request.json()) as Body;

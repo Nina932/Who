@@ -13,7 +13,7 @@
  * eye needs.
  */
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Bloom, EffectComposer, Noise, Vignette } from "@react-three/postprocessing";
@@ -397,6 +397,9 @@ function Link({
     () => new THREE.TubeGeometry(curve, 40, 0.018, 6, false),
     [curve],
   );
+
+  // Geometry built outside the R3F tree is not disposed for us.
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   const material = useRef<THREE.MeshBasicMaterial>(null);
   const scratch = useMemo(() => new THREE.Vector3(), []);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardMutation } from "@/lib/guard";
 import { allFacts, forget, remember, type FactKind } from "@/lib/memory";
 
 /** Memory is auditable by design: read it, add to it, delete from it. */
@@ -11,6 +12,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = guardMutation(request);
+  if (blocked) return blocked.response;
+
   const body = (await request.json().catch(() => ({}))) as {
     text?: unknown;
     kind?: unknown;
@@ -25,6 +29,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const blocked = guardMutation(request);
+  if (blocked) return blocked.response;
+
   const factId = new URL(request.url).searchParams.get("id");
   if (!factId) return NextResponse.json({ error: "id required." }, { status: 400 });
   return NextResponse.json({ forgotten: await forget(factId) });

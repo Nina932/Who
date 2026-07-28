@@ -93,6 +93,7 @@ app/
   loops/page.tsx        Loops Engine workspace
   social/page.tsx       Social Command Center
   phoenix/page.tsx      X For You pipeline — 3D teardown
+  connect/page.tsx      Connector status, OAuth, live probes
   api/thor/route.ts     Orchestrator: attendance + routing + memory
 components/
   thor/CockpitScene.tsx 3D cockpit: nebula, displaced core, orbits, bloom
@@ -112,6 +113,9 @@ lib/
   memory.ts             Durable facts: Haiku extraction, scored recall
   style.ts              Voice learned from the drafts you edit
   store.ts              Atomic JSON persistence under .thor/
+  scheduler.ts          Cadence parsing and the tick that fires due loops
+  connectors.ts         Google OAuth + Drive / Calendar / Gmail calls
+  guard.ts              Origin and secret checks on mutating endpoints
   agents.ts             The roster — 18 seats, 4 families
   orchestrator.ts       Specialist Attendance scoring
   useVoice.ts           Turn-taking state machine
@@ -127,11 +131,22 @@ multi-word terms score higher because they are more specific. `angle` and
 Nothing else needs touching: the graph, the inspector, and the orchestrator all
 read from that one array.
 
+## Tests
+
+```bash
+npm test        # 61 tests, no API keys needed
+```
+
+Node's built-in runner over the pure core. They caught a live routing bug on
+their first run — see [`docs/ENGINE.md`](docs/ENGINE.md#tests).
+
 ## Status
 
 Working: the model stack and routing, the Loops Engine (execution, gates,
-learnings), durable memory, style learning, and persistence.
+learnings), the scheduler, Google connectors (Drive, Calendar, Gmail) over a
+real OAuth flow, durable memory, style learning, persistence, and write
+protection on every mutating endpoint.
 
-Not built: real connectors (Drive, Email, Calendar, LinkedIn), a scheduler to
-fire loops on their cadence, and image generation. See the end of
+Not built: LinkedIn / Chat / Slides connectors, a loop step that calls a
+connector, and image generation. See the end of
 [`docs/ENGINE.md`](docs/ENGINE.md) for the honest list.
