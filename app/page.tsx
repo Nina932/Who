@@ -65,7 +65,7 @@ export default function Cockpit() {
   const voice = useVoice({
     onUtterance: (text) => askRef.current(text),
   });
-  const { speak, setState: setVoiceState } = voice;
+  const { beginSpeech, speakChunk, endSpeech, setState: setVoiceState } = voice;
 
   const ask = useCallback(
     async (text: string, forceAgentId?: string) => {
@@ -95,27 +95,85 @@ export default function Cockpit() {
           body: JSON.stringify({ utterance: text, history, forceAgentId }),
         });
 
-        if (!response.ok) throw new Error(`Orchestrator returned ${response.status}`);
+        if (!response.ok || !response.body) {
+          throw new Error(`Orchestrator returned ${response.status}`);
+        }
 
-        const data = (await response.json()) as {
-          attendance: AttendanceDecision;
-          reply: string;
-          local: boolean;
-        };
+        // The reply arrives as it is generated. A placeholder turn is appended
+        // up front and rewritten in place as deltas land.
+        const replyId = turnId("th");
+        let reply = "";
+        // Only whole sentences are handed to speech — synthesising fragments
+        // makes the cadence robotic.
+        let unspoken = "";
+        beginSpeech();
 
-        setAttendance(data.attendance ?? optimistic);
-        setLocal(Boolean(data.local));
         setTurns((prev) => [
           ...prev,
-          {
-            id: turnId("ax"),
-            role: "specialist",
-            agentId: data.attendance?.primaryId ?? optimistic.primaryId ?? undefined,
-            text: data.reply,
-            at: Date.now(),
-          },
+          { id: replyId, role: "specialist", agentId: optimistic.primaryId ?? undefined, text: "", at: Date.now() },
         ]);
-        speak(data.reply);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        const handle = (event: string, payload: Record<string, unknown>) => {
+          if (event === "meta") {
+            const meta = payload as unknown as { attendance?: AttendanceDecision };
+            if (meta.attendance) {
+              setAttendance(meta.attendance);
+              setTurns((prev) =>
+                prev.map((t) =>
+                  t.id === replyId
+                    ? { ...t, agentId: meta.attendance?.primaryId ?? t.agentId }
+                    : t,
+                ),
+              );
+            }
+          } else if (event === "delta") {
+            const delta = String(payload.text ?? "");
+            reply += delta;
+            unspoken += delta;
+            setTurns((prev) =>
+              prev.map((t) => (t.id === replyId ? { ...t, text: reply } : t)),
+            );
+
+            const boundary = unspoken.lastIndexOf(". ");
+            const end = Math.max(boundary, unspoken.lastIndexOf("? "), unspoken.lastIndexOf("! "));
+            if (end > 0) {
+              speakChunk(unspoken.slice(0, end + 1));
+              unspoken = unspoken.slice(end + 1);
+            }
+          } else if (event === "done") {
+            if (unspoken.trim()) speakChunk(unspoken);
+            unspoken = "";
+            endSpeech();
+            setLocal(Boolean(payload.local));
+          }
+        };
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+
+          for (const frame of frames) {
+            const eventLine = frame.split("\n").find((l) => l.startsWith("event:"));
+            const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+            if (!eventLine || !dataLine) continue;
+            try {
+              handle(eventLine.slice(6).trim(), JSON.parse(dataLine.slice(5).trim()));
+            } catch {
+              // A malformed frame should not kill a good stream.
+            }
+          }
+        }
+
+        // The stream can end without a `done` frame if the server dies.
+        endSpeech();
       } catch (error) {
         setTurns((prev) => [
           ...prev,
@@ -132,7 +190,7 @@ export default function Cockpit() {
         setVoiceState(micOn ? "listening" : "idle");
       }
     },
-    [micOn, setVoiceState, speak],
+    [beginSpeech, endSpeech, micOn, setVoiceState, speakChunk],
   );
 
   askRef.current = (text, forceAgentId) => {

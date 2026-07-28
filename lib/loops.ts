@@ -336,9 +336,16 @@ export async function startRun(loopId: string, input?: string): Promise<LoopRun>
  * A gate does not "pause politely" — it sets `awaiting-go` and returns. Nothing
  * downstream of a gate can execute until `approve` is called.
  */
+/** A human's "no" — and a finished run — cannot be walked back by `advance`. */
+const TERMINAL: RunStatus[] = ["completed", "rejected"];
+
 export async function advance(runId: string): Promise<LoopRun> {
   let run = await getRun(runId);
   if (!run) throw new Error(`Unknown run: ${runId}`);
+
+  // Without this guard, POSTing `advance` on a rejected run resumed it at the
+  // gate — an operator's rejection could be undone by a stray call.
+  if (TERMINAL.includes(run.status)) return run;
 
   const loop = LOOPS_BY_ID[run.loopId];
   if (!loop) throw new Error(`Unknown loop: ${run.loopId}`);

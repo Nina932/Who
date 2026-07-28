@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { AGENTS_BY_ID, FAMILY_LABEL } from "@/lib/agents";
 import { learnFrom, recall, renderForPrompt as renderMemory } from "@/lib/memory";
-import { callRole, routeTurn, stackStatus } from "@/lib/models";
+import { routeTurn, stackStatus, streamRole } from "@/lib/models";
 import { decideAttendance, draftReply, type Turn } from "@/lib/orchestrator";
 import { getProfile, renderForPrompt as renderStyle } from "@/lib/style";
 
@@ -19,8 +19,13 @@ import { getProfile, renderForPrompt as renderStyle } from "@/lib/style";
  * collapsing them would mean either paying Opus prices for small talk or
  * taking consequential decisions on a fast model.
  *
- * Then memory and the learned style profile are folded into the prompt, and
- * after the reply lands, Haiku is asked what in the exchange is worth keeping.
+ * Then memory and the learned style profile are folded into the prompt.
+ *
+ * The response is a Server-Sent Event stream: `meta` first so the cockpit can
+ * light the right node immediately, then text deltas so speech can start on
+ * the first sentence, then `done`. Memory extraction runs AFTER the last delta
+ * is flushed — it is a second model call, and blocking the reply on it added
+ * seconds of silence to a voice-first product.
  */
 
 export const runtime = "nodejs";
@@ -112,34 +117,55 @@ export async function POST(request: Request) {
     }));
   messages.push({ role: "user", content: utterance });
 
-  const result = await callRole(route.role, { system: fullSystem, messages });
+  const encoder = new TextEncoder();
 
-  if (!result.live) {
-    return NextResponse.json({
-      attendance,
-      reply: draftReply(utterance, attendance),
-      local: true,
-      routing: { role: route.role, model: result.spec.label, reason: route.reason },
-      memoryUsed: facts.length,
-      degraded: result.error,
-    });
-  }
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(
+          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
+      };
 
-  // ── Learn ──────────────────────────────────────────────────────────────
-  // Deliberately awaited: the operator can say "remember that" and immediately
-  // ask about it in the next breath, and a fire-and-forget write would lose
-  // that race. It is one Haiku call.
-  const learned = await learnFrom(utterance, result.text).catch((error) => {
-    console.error("memory: extraction failed", error);
-    return [];
+      // Sent before a single token exists, so the cockpit lights the attending
+      // node the instant the operator stops talking.
+      send("meta", {
+        attendance,
+        routing: { role: route.role, model: route.spec.label, reason: route.reason },
+        memoryUsed: facts.length,
+      });
+
+      const result = await streamRole(
+        route.role,
+        { system: fullSystem, messages },
+        (delta) => send("delta", { text: delta }),
+      );
+
+      if (!result.live) {
+        const fallback = draftReply(utterance, attendance);
+        send("delta", { text: fallback });
+        send("done", { local: true, degraded: result.error, learned: [] });
+        controller.close();
+        return;
+      }
+
+      // The operator already has the whole reply; extraction latency is now
+      // invisible to them.
+      const learned = await learnFrom(utterance, result.text).catch((error) => {
+        console.error("memory: extraction failed", error);
+        return [];
+      });
+
+      send("done", { local: false, learned: learned.map((f) => f.text) });
+      controller.close();
+    },
   });
 
-  return NextResponse.json({
-    attendance,
-    reply: result.text,
-    local: false,
-    routing: { role: route.role, model: result.spec.label, reason: route.reason },
-    memoryUsed: facts.length,
-    learned: learned.map((f) => f.text),
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+    },
   });
 }

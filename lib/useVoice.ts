@@ -147,7 +147,56 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
   /** Interrupt: kill playback and hand the floor straight back. */
   const stopSpeaking = useCallback(() => {
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    // Drop the queue too, or a half-spoken stream keeps firing after the
+    // operator has taken the floor back.
+    pendingRef.current = 0;
+    doneQueueingRef.current = true;
     setState(wantListeningRef.current ? "listening" : "idle");
+  }, []);
+
+  // ── Incremental speech ──────────────────────────────────────────────────
+  // SpeechSynthesis queues natively, so streamed sentences can be enqueued as
+  // they complete. State returns to listening only when the queue drains AND
+  // no more chunks are coming.
+  const pendingRef = useRef(0);
+  const doneQueueingRef = useRef(true);
+
+  const beginSpeech = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.speechSynthesis?.cancel();
+    pendingRef.current = 0;
+    doneQueueingRef.current = false;
+  }, []);
+
+  const speakChunk = useCallback((text: string) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    // Bracketed system notes are for the eye, not the ear.
+    const spoken = text.replace(/\[[^\]]*\]/g, "").trim();
+    if (!spoken) return;
+
+    const utterance = new SpeechSynthesisUtterance(spoken);
+    utterance.rate = 1.03;
+    utterance.pitch = 0.95;
+    pendingRef.current += 1;
+
+    const settle = () => {
+      pendingRef.current = Math.max(0, pendingRef.current - 1);
+      if (pendingRef.current === 0 && doneQueueingRef.current) {
+        setState(wantListeningRef.current ? "listening" : "idle");
+      }
+    };
+
+    utterance.onstart = () => setState("speaking");
+    utterance.onend = settle;
+    utterance.onerror = settle;
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  const endSpeech = useCallback(() => {
+    doneQueueingRef.current = true;
+    if (pendingRef.current === 0) {
+      setState(wantListeningRef.current ? "listening" : "idle");
+    }
   }, []);
 
   const speak = useCallback((text: string) => {
@@ -181,6 +230,9 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     startListening,
     stopListening,
     speak,
+    beginSpeech,
+    speakChunk,
+    endSpeech,
     stopSpeaking,
   };
 }

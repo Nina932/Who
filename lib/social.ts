@@ -1,10 +1,14 @@
 /**
  * Social Command Center data model.
  *
- * The interesting idea on this screen is not the follower count — it is the
- * *goal loop*: a standing objective the Social agent runs on a cadence, with
- * an explicit autonomy level saying how far it may go before a human is
- * required. That is what makes it a workforce rather than a scheduler.
+ * Channel figures only. The loops on this screen are the REAL ones from
+ * `lib/loops.ts`, fetched through /api/loops — there is deliberately no second
+ * loop model here, because two of them meant the screen showed theatre while
+ * the engine ran elsewhere.
+ *
+ * The follower/reach numbers below are sample data and are labelled as such in
+ * the UI: there are no channel connectors yet, so there is nothing real to
+ * show. See the end of docs/ENGINE.md.
  */
 
 export type Autonomy = "draft" | "approve" | "full";
@@ -22,22 +26,6 @@ export interface Platform {
   /** Brand accent, used only as a hairline so the HUD stays coherent. */
   accent: string;
   url: string;
-}
-
-export interface LoopStage {
-  label: string;
-  state: "done" | "active" | "queued" | "gated";
-}
-
-export interface GoalLoop {
-  id: string;
-  name: string;
-  objective: string;
-  cadence: string;
-  autonomy: Autonomy;
-  owner: string;
-  stages: LoopStage[];
-  nextRun: string;
 }
 
 export interface Attention {
@@ -94,57 +82,6 @@ export const PLATFORMS: Platform[] = [
     delta: -2.3,
     accent: "#3fb0d6",
     url: "https://linkedin.com",
-  },
-];
-
-export const GOAL_LOOPS: GoalLoop[] = [
-  {
-    id: "weekly-content",
-    name: "Weekly content plan",
-    objective: "Three build-in-public posts a week, in the operator's own voice.",
-    cadence: "Mondays, 07:00",
-    autonomy: "approve",
-    owner: "social",
-    stages: [
-      { label: "Mine", state: "done" },
-      { label: "Plan", state: "done" },
-      { label: "Draft", state: "active" },
-      { label: "Review", state: "gated" },
-      { label: "Post", state: "queued" },
-    ],
-    nextRun: "Monday 07:00",
-  },
-  {
-    id: "comment-triage",
-    name: "Comment triage",
-    objective: "Every comment read, sorted, and answered or escalated within an hour.",
-    cadence: "Hourly",
-    autonomy: "full",
-    owner: "social",
-    stages: [
-      { label: "Fetch", state: "done" },
-      { label: "Sort", state: "done" },
-      { label: "Draft", state: "done" },
-      { label: "Reply", state: "active" },
-      { label: "Log", state: "queued" },
-    ],
-    nextRun: "in 24 minutes",
-  },
-  {
-    id: "inbound-leads",
-    name: "Inbound to pipeline",
-    objective: "Turn a DM that smells like work into a qualified lead with a next step.",
-    cadence: "On arrival",
-    autonomy: "draft",
-    owner: "sales",
-    stages: [
-      { label: "Detect", state: "done" },
-      { label: "Qualify", state: "active" },
-      { label: "Enrich", state: "queued" },
-      { label: "Draft", state: "queued" },
-      { label: "Hand off", state: "gated" },
-    ],
-    nextRun: "on arrival",
   },
 ];
 

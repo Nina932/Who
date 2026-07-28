@@ -260,13 +260,15 @@ function Core({ energy }: { energy: number }) {
 interface NodeProps {
   agent: Agent;
   position: THREE.Vector3;
-  attend: number;
+  /** Read per-frame, never as a prop: easing must not depend on re-renders. */
+  attendRef: React.RefObject<Record<string, number>>;
+  isPrimary: boolean;
   selected: boolean;
   energy: number;
   onSelect: (id: string) => void;
 }
 
-function AgentNode({ agent, position, attend, selected, energy, onSelect }: NodeProps) {
+function AgentNode({ agent, position, attendRef, isPrimary, selected, energy, onSelect }: NodeProps) {
   const shape = useRef<THREE.Mesh>(null);
   const halo = useRef<THREE.Mesh>(null);
   const isIntegration = agent.family === "integration";
@@ -279,6 +281,7 @@ function AgentNode({ agent, position, attend, selected, energy, onSelect }: Node
 
   useFrame((state, delta) => {
     const t = state.clock.getElapsedTime();
+    const attend = attendRef.current?.[agent.id] ?? 0;
     if (shape.current) {
       shape.current.rotation.x += delta * 0.5;
       shape.current.rotation.y += delta * 0.35;
@@ -343,16 +346,14 @@ function AgentNode({ agent, position, attend, selected, energy, onSelect }: Node
             fontSize: isIntegration ? 11 : 13,
             fontWeight: isIntegration ? 400 : 600,
             letterSpacing: "0.04em",
-            color:
-              attend > 0.35
-                ? "rgba(255,236,186,0.98)"
-                : isIntegration
-                  ? "rgba(146,171,182,0.62)"
-                  : "rgba(228,248,253,0.94)",
-            textShadow:
-              attend > 0.35
-                ? "0 0 18px rgba(242,193,78,0.85)"
-                : "0 0 14px rgba(63,224,240,0.45)",
+            color: isPrimary
+              ? "rgba(255,236,186,0.98)"
+              : isIntegration
+                ? "rgba(146,171,182,0.62)"
+                : "rgba(228,248,253,0.94)",
+            textShadow: isPrimary
+              ? "0 0 18px rgba(242,193,78,0.85)"
+              : "0 0 14px rgba(63,224,240,0.45)",
           }}
         >
           {agent.name}
@@ -363,13 +364,15 @@ function AgentNode({ agent, position, attend, selected, energy, onSelect }: Node
 }
 
 function Link({
+  agentId,
   position,
-  attend,
+  attendRef,
   energy,
   integration,
 }: {
+  agentId: string;
   position: THREE.Vector3;
-  attend: number;
+  attendRef: React.RefObject<Record<string, number>>;
   energy: number;
   integration: boolean;
 }) {
@@ -400,6 +403,7 @@ function Link({
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
+    const attend = attendRef.current?.[agentId] ?? 0;
     if (material.current) {
       material.current.opacity =
         (integration ? 0.1 : 0.2) + attend * 0.7 + energy * 0.06;
@@ -460,7 +464,8 @@ function Workforce({
     [],
   );
 
-  // Attendance is eased in a ref so it animates without re-rendering React.
+  // Eased in a ref and READ IN EACH CHILD'S useFrame. Passing the number
+  // down as a prop froze it at the last render, which killed the animation.
   const attendRef = useRef<Record<string, number>>({});
 
   useFrame((_, delta) => {
@@ -476,19 +481,20 @@ function Workforce({
   return (
     <group ref={group}>
       {nodes.map(({ agent, position }) => {
-        const attend = attendRef.current[agent.id] ?? 0;
         return (
           <group key={agent.id}>
             <Link
+              agentId={agent.id}
               position={position}
-              attend={attend}
+              attendRef={attendRef}
               energy={energy}
               integration={agent.family === "integration"}
             />
             <AgentNode
               agent={agent}
               position={position}
-              attend={attend}
+              attendRef={attendRef}
+              isPrimary={agent.id === primaryId}
               selected={selectedId === agent.id}
               energy={energy}
               onSelect={onSelect}

@@ -289,3 +289,134 @@ export function parseJson<T>(text: string): T | null {
     }
   }
 }
+
+// ── Streaming ────────────────────────────────────────────────────────────
+
+/**
+ * Stream a role, delivering text deltas as they arrive.
+ *
+ * This exists for one reason: Thor is voice-first. Waiting for a full
+ * completion before speaking adds seconds of silence to every turn, and the
+ * whole point of the rebuilt voice system is that you are not sitting there
+ * waiting for it. With deltas, the first sentence can be spoken while the rest
+ * is still being generated.
+ *
+ * Returns the full text as well, so callers can persist and learn from it.
+ */
+export async function streamRole(
+  role: ModelRole,
+  options: CallOptions,
+  onDelta: (delta: string) => void,
+): Promise<CallResult> {
+  const spec = STACK[role];
+
+  if (!keyFor(spec.provider)) {
+    return {
+      text: "",
+      spec,
+      live: false,
+      error: `No ${spec.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "GOOGLE_API_KEY"} configured`,
+    };
+  }
+
+  const request: { url: string; headers: Record<string, string>; body: string } =
+    spec.provider === "anthropic"
+      ? {
+          url: `${ANTHROPIC_BASE}/v1/messages`,
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": keyFor("anthropic") as string,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: spec.model,
+            max_tokens: options.maxTokens ?? spec.maxTokens,
+            system: options.system,
+            messages: options.messages,
+            stream: true,
+          }),
+        }
+      : {
+          url: `${GOOGLE_BASE}/v1beta/models/${spec.model}:streamGenerateContent?alt=sse`,
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": keyFor("google") as string,
+          },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: options.system }] },
+            contents: options.messages.map((m) => ({
+              role: m.role === "assistant" ? "model" : "user",
+              parts: [{ text: m.content }],
+            })),
+            generationConfig: { maxOutputTokens: options.maxTokens ?? spec.maxTokens },
+          }),
+        };
+
+  try {
+    const response = await fetch(request.url, {
+      method: "POST",
+      headers: request.headers,
+      body: request.body,
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `${spec.provider} ${response.status}: ${(await response.text()).slice(0, 300)}`,
+      );
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are newline-delimited; the tail may be a partial line.
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+
+        try {
+          const event = JSON.parse(payload) as {
+            type?: string;
+            delta?: { type?: string; text?: string };
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          };
+
+          const delta =
+            spec.provider === "anthropic"
+              ? event.type === "content_block_delta" && event.delta?.type === "text_delta"
+                ? (event.delta.text ?? "")
+                : ""
+              : (event.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "");
+
+          if (delta) {
+            text += delta;
+            onDelta(delta);
+          }
+        } catch {
+          // A malformed frame should not abort a good stream.
+        }
+      }
+    }
+
+    return { text, spec, live: true };
+  } catch (error) {
+    console.error(`models: ${role} stream failed`, error);
+    return {
+      text: "",
+      spec,
+      live: false,
+      error: error instanceof Error ? error.message : "unknown provider error",
+    };
+  }
+}

@@ -137,7 +137,33 @@ pairs into prose rules. The rolling 40-sample window means voice drift is
 tracked rather than averaged away. `moreMyStyle()` backs the **"More my style"**
 action.
 
-## 5. Persistence
+## 5. Streaming and the voice path
+
+`streamRole` in [`lib/models.ts`](../lib/models.ts) streams both providers
+(Anthropic SSE, Google `streamGenerateContent?alt=sse`). `/api/thor` returns a
+Server-Sent Event stream:
+
+```
+event: meta    { attendance, routing, memoryUsed }   <- before any token exists
+event: delta   { text: "First " }                    <- word by word
+event: delta   { text: "sentence " }
+event: done    { local, learned }
+```
+
+`meta` arrives first so the cockpit lights the attending node the instant the
+operator stops talking, rather than after generation.
+
+The client buffers deltas to **sentence boundaries** and enqueues each finished
+sentence with `speakChunk` — SpeechSynthesis queues natively, so Thor starts
+speaking the first sentence while the third is still being generated.
+Synthesising raw fragments makes the cadence robotic, which is why the boundary
+split matters.
+
+Memory extraction moved **after** the last delta is flushed. It is a second
+model call, and blocking the reply on it added seconds of silence to a
+voice-first product — the original justification for awaiting it was wrong.
+
+## 6. Persistence
 
 [`lib/store.ts`](../lib/store.ts). Flat JSON under `.thor/`, written
 temp-then-rename so a crash can't leave a half-written file, and serialised
@@ -148,6 +174,24 @@ concurrently and would otherwise lose writes.
 .thor/loop-runs.json  .thor/loop-learnings.json
 .thor/memory.json     .thor/style-profile.json  .thor/style-samples.json
 ```
+
+## Fixed after review
+
+Four defects found by grilling the build, each verified fixed:
+
+1. **Specialist Attendance was invisible in the 3D cockpit.** The eased
+   attendance value was read during render and passed to children as a number,
+   so it froze at whatever it was on the last React render (~0) — the node
+   never turned amber, the link never lit, the traffic packet never ran.
+   Children now read the ref inside their own `useFrame`; only label styling,
+   which genuinely needs a render, uses a boolean prop.
+2. **Rejection was not terminal.** `advance()` had no status guard, so a stray
+   call could walk a rejected run back to its gate and undo a human's "no".
+3. **The Social screen was disconnected from the engine.** It rendered a second,
+   hardcoded loop model. That model is deleted; the screen now reads
+   `/api/loops`, derives "needs you" from runs genuinely sitting at a gate, and
+   carries the GO gate inline. Channel figures are labelled as sample data.
+4. **No streaming** — see section 5.
 
 ## Endpoints
 
