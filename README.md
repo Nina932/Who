@@ -132,11 +132,26 @@ multi-word terms score higher because they are more specific. `angle` and
 Nothing else needs touching: the graph, the inspector, and the orchestrator all
 read from that one array.
 
-## Tests
+## Verification
 
 ```bash
-npm test              # 77 tests, no API keys needed
+npm run verify        # typecheck + 77 tests + build, no API keys needed
+npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
+```
+
+There is no CI on this repository. A GitHub Actions workflow was added and
+removed: GitHub never assigned it a runner — the job finished in 10 seconds
+with `runner_id: 0`, no steps and no logs — which is an account-level Actions
+entitlement problem, not something the repo can fix. A permanently red check
+that never ran is worse than no check, so verification runs locally instead.
+
+The workflow is preserved inert at `.github/workflows/ci.yml.disabled` and runs
+exactly what `npm run verify` runs. To restore it once Actions can schedule
+runners:
+
+```bash
+git mv .github/workflows/ci.yml.disabled .github/workflows/ci.yml
 ```
 
 Node's built-in runner over the pure core. They caught a live routing bug on

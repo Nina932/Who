@@ -1,3 +1,16 @@
+# DISABLED — kept for restoration, inert while the extension is not .yml.
+#
+# GitHub never assigned a runner to this workflow: the job completed in 10s
+# with runner_id 0, no steps and no logs, which is an account-level Actions
+# entitlement problem rather than anything in this repository. Rather than
+# leave a permanently red check on every PR, verification runs locally.
+#
+# To restore once Actions can schedule runners:
+#     git mv .github/workflows/ci.yml.disabled .github/workflows/ci.yml
+#
+# The steps below are exactly what `npm run verify` runs locally, so the two
+# cannot drift.
+
 name: CI
 
 on:

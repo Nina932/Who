@@ -355,6 +355,10 @@ reported as skipped: a missing key is a choice, a wrong ID is a bug.
 
 ## Tests
 
+`npm run verify` runs typecheck, the tests and the build in one command — the
+same three steps the (currently disabled) CI workflow runs, so the two cannot
+drift. See the README for why CI is off.
+
 `npm test` — 77 tests on the pure core, no API keys, via Node's built-in runner.
 
 They earned their keep on the first run by catching a **live routing bug**:
