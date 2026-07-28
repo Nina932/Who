@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ci` rather than `install`: the lockfile is the source of truth, and a
+      # silently-updated dependency is exactly what CI should catch.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+        env:
+          # Pinned empty so a leaked key could never make the suite pass for
+          # the wrong reason. Every test is written to run without providers.
+          ANTHROPIC_API_KEY: ""
+          GOOGLE_API_KEY: ""
+
+      - name: Build
+        run: npm run build
