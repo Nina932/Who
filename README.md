@@ -54,10 +54,30 @@ and everything recomputes live. Full analysis in
 
 ![The ranking stage attention mask](docs/screenshots/phoenix-ranking.png)
 
+## Getting it on your machine
+
+Everything below runs in a terminal on your own computer — Terminal on macOS,
+Windows Terminal or PowerShell on Windows, any terminal on Linux.
+
+You need [Node.js 20 or newer](https://nodejs.org) (22 is what this was built
+and tested on). Check with `node -v`.
+
+```bash
+git clone https://github.com/Nina932/Who.git
+cd Who
+
+# main is an empty base branch — the code lives here until the PR is merged
+git checkout claude/facebook-page-product-analysis-3wuj0g
+
+npm install
+```
+
+Once the pull request is merged, `main` will have everything and the
+`git checkout` line is no longer needed.
+
 ## Run it
 
 ```bash
-npm install
 npm run dev          # http://localhost:3000
 ```
 
