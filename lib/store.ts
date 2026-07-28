@@ -23,11 +23,32 @@ import path from "node:path";
  * this file knows which is in use.
  */
 
+export interface Versioned {
+  serialised: string | null;
+  /** Opaque token identifying this exact revision. */
+  version: string;
+}
+
 export interface StoreDriver {
   readonly name: string;
   read(collection: string): Promise<string | null>;
   write(collection: string, serialised: string): Promise<void>;
   remove(collection: string): Promise<void>;
+  /**
+   * Read with the revision token needed for a compare-and-set.
+   * Drivers that cannot version return a constant, which degrades to
+   * last-write-wins — correct for single-process, unsafe for many.
+   */
+  readVersioned?(collection: string): Promise<Versioned>;
+  /**
+   * Write only if the stored revision still matches `expected`.
+   * Returns false when someone else wrote first.
+   */
+  writeIfUnchanged?(
+    collection: string,
+    serialised: string,
+    expected: string,
+  ): Promise<boolean>;
 }
 
 // ── Filesystem ───────────────────────────────────────────────────────────
@@ -66,6 +87,24 @@ function createFsDriver(root: string): StoreDriver {
 
 function createRedisDriver(url: string, token: string): StoreDriver {
   const key = (collection: string) => `thor:${collection.replace(/[^a-z0-9_-]/gi, "")}`;
+  const versionKey = (collection: string) => `${key(collection)}:v`;
+
+  /**
+   * Compare-and-set, server-side.
+   *
+   * A version counter lives beside the document. The script checks it and
+   * bumps it in one atomic step, so two instances writing concurrently cannot
+   * both believe they won — which is exactly what the per-process chain
+   * cannot protect against.
+   */
+  const CAS_SCRIPT = `
+    local current = redis.call('GET', KEYS[2])
+    if current == false then current = '0' end
+    if current ~= ARGV[2] then return 0 end
+    redis.call('SET', KEYS[1], ARGV[1])
+    redis.call('SET', KEYS[2], tostring(tonumber(current) + 1))
+    return 1
+  `;
 
   const command = async (parts: string[]): Promise<unknown> => {
     const response = await fetch(url, {
@@ -90,7 +129,29 @@ function createRedisDriver(url: string, token: string): StoreDriver {
       await command(["SET", key(collection), serialised]);
     },
     async remove(collection) {
-      await command(["DEL", key(collection)]);
+      await command(["DEL", key(collection), versionKey(collection)]);
+    },
+    async readVersioned(collection) {
+      // One round trip for both the document and its revision counter.
+      const body = (await command([
+        "MGET",
+        key(collection),
+        versionKey(collection),
+      ])) as { result?: Array<string | null> };
+      const [serialised, version] = body.result ?? [];
+      return { serialised: serialised ?? null, version: version ?? "0" };
+    },
+    async writeIfUnchanged(collection, serialised, expected) {
+      const body = (await command([
+        "EVAL",
+        CAS_SCRIPT,
+        "2",
+        key(collection),
+        versionKey(collection),
+        serialised,
+        expected,
+      ])) as { result?: number };
+      return body.result === 1;
     },
   };
 }
@@ -143,12 +204,18 @@ export async function dropCollection(collection: string): Promise<void> {
  * Route handlers run concurrently in one process, so a naive
  * read-modify-write would interleave and silently lose updates.
  *
- * The chain is per-process. On a single long-lived server that is the whole
- * story; behind several instances sharing Redis it is not, and a compare-and-
- * set would be needed. That is a real limit and it is named in docs/ENGINE.md
- * rather than papered over.
+ * The chain alone is per-process, which is fine for one long-lived server and
+ * not fine behind several instances. When the driver supports versioning, this
+ * additionally does a compare-and-set: read the revision, apply the mutator,
+ * and write only if nobody else moved first — retrying on fresh state if they
+ * did. That is what makes horizontal scale safe.
+ *
+ * The mutator must therefore be a pure function of `current`: it can be
+ * re-run, so side effects inside it would happen more than once.
  */
 const chains = new Map<string, Promise<unknown>>();
+
+const MAX_CAS_ATTEMPTS = 8;
 
 export function mutate<T, R>(
   collection: string,
@@ -158,10 +225,45 @@ export function mutate<T, R>(
   const previous = chains.get(collection) ?? Promise.resolve();
 
   const run = previous.then(async () => {
-    const current = await readCollection<T>(collection, fallback);
-    const { next, result } = await mutator(current);
-    await writeCollection(collection, next);
-    return result;
+    // Fast path: a driver with no versioning is single-process by definition,
+    // and the chain above is already sufficient.
+    if (!driver.readVersioned || !driver.writeIfUnchanged) {
+      const current = await readCollection<T>(collection, fallback);
+      const { next, result } = await mutator(current);
+      await writeCollection(collection, next);
+      return result;
+    }
+
+    // Optimistic retry: re-read and re-apply when another instance wrote
+    // first. The mutator runs again on fresh state rather than clobbering it,
+    // which is why it must stay a pure function of `current`.
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const { serialised, version } = await driver.readVersioned(collection);
+
+      let current: T = fallback;
+      if (serialised !== null) {
+        try {
+          current = JSON.parse(serialised) as T;
+        } catch (error) {
+          console.error(`store: could not parse ${collection}`, error);
+        }
+      }
+
+      const { next, result } = await mutator(current);
+      const won = await driver.writeIfUnchanged(
+        collection,
+        JSON.stringify(next, null, 2),
+        version,
+      );
+      if (won) return result;
+
+      // Brief, growing backoff so contending writers separate.
+      await new Promise((resolve) => setTimeout(resolve, 8 * (attempt + 1)));
+    }
+
+    throw new Error(
+      `store: gave up writing ${collection} after ${MAX_CAS_ATTEMPTS} contended attempts`,
+    );
   });
 
   // Keep the chain alive even if this link rejects.

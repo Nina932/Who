@@ -17,6 +17,7 @@
 
 import { callRole, parseJson, type ModelRole } from "./models";
 import { TOOLS, toolInstruction } from "./tools";
+import { postToSlack } from "./connectors";
 import { recall, renderForPrompt as renderMemory } from "./memory";
 import { getProfile, renderForPrompt as renderStyle } from "./style";
 import { id, mutate, readCollection } from "./store";
@@ -136,6 +137,15 @@ export const LOOPS: LoopDefinition[] = [
         role: "quick",
         instruction:
           "Turn the approved recommendations into a concrete task list with owners and dates.",
+      },
+      {
+        id: "log",
+        name: "Log",
+        kind: "tool",
+        role: "quick",
+        tool: "sheets.log",
+        instruction:
+          "Append this week's review to the running log so the numbers live somewhere they can be compared.",
       },
     ],
   },
@@ -376,6 +386,11 @@ export async function advance(runId: string): Promise<LoopRun> {
 
     if (step.kind === "gate") {
       const updated = await patchRun(runId, { status: "awaiting-go" });
+      // A gate nobody knows about is just a stall. Fire-and-forget: a chat
+      // outage must never hold up the engine or fail the run.
+      void notifyGate(loop, updated ?? run).catch((error) =>
+        console.error("loops: gate notification failed", error),
+      );
       return updated ?? run;
     }
 
@@ -466,6 +481,34 @@ export async function advance(runId: string): Promise<LoopRun> {
 
   const finished = await patchRun(runId, { status: "completed", endedAt: Date.now() });
   return finished ?? run;
+}
+
+/**
+ * Tell the operator a loop is holding.
+ *
+ * This is the whole reason a Chat connector earns its place: semi-autonomous
+ * work is only useful if you find out it needs you without going to look.
+ */
+async function notifyGate(loop: LoopDefinition, run: LoopRun): Promise<void> {
+  const base = process.env.THOR_BASE_URL ?? "http://localhost:3000";
+  const preview = run.artifacts.at(-1)?.text.slice(0, 280) ?? "";
+
+  const message = [
+    `*${loop.name}* is holding at its review gate.`,
+    run.artifacts.length
+      ? `Produced ${run.artifacts.length} step${run.artifacts.length === 1 ? "" : "s"}. Last one:`
+      : "",
+    preview ? `> ${preview.replace(/\n/g, "\n> ")}` : "",
+    `Approve or reject: ${base}/loops`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const result = await postToSlack(message);
+  // Not connected is the normal case, not an error worth shouting about.
+  if (!result.ok && !result.needsConnection) {
+    console.error("loops: gate notification rejected —", result.error);
+  }
 }
 
 /** The human GO. Records the note as feedback and resumes past the gate. */

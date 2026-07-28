@@ -20,6 +20,7 @@
 
 import {
   CONNECTORS_BY_ID,
+  appendToLog,
   createCalendarEvent,
   createMailDraft,
   createSlideDeck,
@@ -150,6 +151,32 @@ export const TOOLS: Record<string, ToolSpec> = {
       return result.ok
         ? { ok: true, summary: `Draft saved to Gmail for ${to} — "${subject}". Not sent.` }
         : { ok: false, summary: `Draft failed — ${result.error}` };
+    },
+  },
+
+  "sheets.log": {
+    name: "sheets.log",
+    connectorId: "google-sheets",
+    purpose:
+      "Append one row to a running log spreadsheet, so results can be compared across weeks instead of living in prose.",
+    schemaHint: `{"log":string,"row":[string]}`,
+    async run(input) {
+      const root = asRecord(input);
+      const log = asString(root?.log) ?? "Thor — run log";
+      const row = Array.isArray(root?.row)
+        ? root.row.map((cell) => (cell === null || cell === undefined ? "" : String(cell)))
+        : null;
+
+      if (!row || row.length === 0) {
+        return { ok: false, summary: "Nothing logged — no row was proposed." };
+      }
+
+      // Stamped here rather than by the model: a model-invented timestamp in a
+      // log is worse than none at all.
+      const result = await appendToLog(log, [new Date().toISOString(), ...row]);
+      return result.ok
+        ? { ok: true, summary: `Logged to "${log}" — ${result.data.url}` }
+        : { ok: false, summary: `Log failed — ${result.error}` };
     },
   },
 

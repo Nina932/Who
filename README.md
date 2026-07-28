@@ -135,7 +135,7 @@ read from that one array.
 ## Tests
 
 ```bash
-npm test              # 75 tests, no API keys needed
+npm test              # 77 tests, no API keys needed
 npm run verify:models # checks every configured model ID actually exists
 ```
 
@@ -149,11 +149,13 @@ learnings), the scheduler, Google connectors (Drive, Calendar, Gmail) over a
 real OAuth flow, durable memory, style learning, persistence, and write
 protection on every mutating endpoint.
 
-Loops now reach the world: past its gate, the Content Engine places approved
-posts on the calendar and Inbound saves its reply as a Gmail draft. Connectors
-cover Drive, Calendar, Gmail, Slides and LinkedIn; image generation is wired to
-Imagen. State runs on the filesystem by default or Upstash Redis for
-serverless.
+Loops reach the world: past its gate, the Content Engine places approved posts
+on the calendar, Inbound saves its reply as a Gmail draft, and the Weekly
+Review appends to a log spreadsheet. When a run stops at a gate, Slack tells
+you. Connectors cover Drive, Calendar, Gmail, Sheets, Slides, Slack and
+LinkedIn; image generation is wired to Imagen. State runs on the filesystem by
+default or Upstash Redis — with compare-and-set, so several instances can share
+one store.
 
-Not built: Chat and Sheets connectors, and horizontal scale (the write chain is
-per-process). See the end of [`docs/ENGINE.md`](docs/ENGINE.md).
+Not built: Google Chat and WhatsApp, and retry/backoff on provider calls. See
+the end of [`docs/ENGINE.md`](docs/ENGINE.md).

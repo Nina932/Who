@@ -116,3 +116,77 @@ describe("drivers", () => {
     assert.deepEqual(await store.readCollection<string[]>("swapped", []), []);
   });
 });
+
+describe("compare-and-set", () => {
+  it("does not lose a write when another instance moves first", async () => {
+    // Models a second process: the first read of every attempt is answered
+    // with stale state, so the CAS must fail and the mutator must re-run
+    // against what is actually stored.
+    let stored: string | null = null;
+    let version = 0;
+    let stolen = false;
+
+    store.setDriver({
+      name: "cas-test",
+      async read() {
+        return stored;
+      },
+      async write(_collection, serialised) {
+        stored = serialised;
+      },
+      async remove() {
+        stored = null;
+      },
+      async readVersioned() {
+        return { serialised: stored, version: String(version) };
+      },
+      async writeIfUnchanged(_collection, serialised, expected) {
+        // Exactly once, pretend another instance wrote between read and write.
+        if (!stolen) {
+          stolen = true;
+          stored = JSON.stringify(["from-the-other-instance"], null, 2);
+          version += 1;
+          return false;
+        }
+        if (expected !== String(version)) return false;
+        stored = serialised;
+        version += 1;
+        return true;
+      },
+    });
+
+    await store.mutate<string[], null>("cas", [], (current) => ({
+      next: [...current, "mine"],
+      result: null,
+    }));
+
+    const final = await store.readCollection<string[]>("cas", []);
+    // The other instance's write survived AND ours landed on top of it.
+    assert.deepEqual(final, ["from-the-other-instance", "mine"]);
+  });
+
+  it("gives up loudly rather than silently dropping a write", async () => {
+    store.setDriver({
+      name: "always-contended",
+      async read() {
+        return null;
+      },
+      async write() {},
+      async remove() {},
+      async readVersioned() {
+        return { serialised: null, version: "0" };
+      },
+      async writeIfUnchanged() {
+        return false; // never wins
+      },
+    });
+
+    await assert.rejects(
+      store.mutate<string[], null>("hot", [], (current) => ({
+        next: [...current, "x"],
+        result: null,
+      })),
+      /contended attempts/,
+    );
+  });
+});

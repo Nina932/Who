@@ -180,9 +180,21 @@ the Redis driver is for.
 Writes are serialised through a per-collection promise chain, because route
 handlers run concurrently and a naive read-modify-write loses updates.
 
-**A named limit:** that chain is per-process. Behind several instances sharing
-one Redis it is not enough, and a compare-and-set would be needed. Single
-instance is fine; horizontal scale is not yet.
+**Horizontal scale.** The chain alone is per-process, which is not enough
+behind several instances. When the driver supports versioning, `mutate` also
+does a compare-and-set: read the revision, apply the mutator, write only if
+nobody moved first, and retry against fresh state if they did. The Redis driver
+implements this with a Lua script that checks and bumps a version counter
+beside the document in one atomic step, so two instances writing concurrently
+cannot both believe they won.
+
+After 8 contended attempts it throws rather than dropping the write silently —
+tested both ways: a stolen write is re-applied on top of the winner, and a
+permanently contended collection raises instead of quietly losing data.
+
+The consequence worth knowing: **the mutator must be a pure function of
+`current`**, because it can be re-run. Side effects inside it would happen more
+than once.
 
 ## 7. The scheduler
 
@@ -222,7 +234,14 @@ Scopes are requested narrowly on purpose:
 | Calendar | Google | `calendar.events` | Needed to place approved work |
 | Email | Google | `gmail.readonly` + `gmail.compose` | **compose, not send** — Thor drafts, a human presses send |
 | Slides | Google | `presentations` + `drive.file` | `drive.file` only touches files Thor created |
+| Sheets | Google | `spreadsheets` + `drive.file` | Appends run outcomes to a log you can pivot |
+| Chat | Slack | `chat:write`, `channels:read` | **Post-only.** Thor speaks; it never reads your messages |
 | LinkedIn | LinkedIn | `w_member_social` | Publishing — **wired into no loop by default** |
+
+**"Chat" was ambiguous** in the source roster — Slack, Google Chat and WhatsApp
+are three different integrations and nothing indicated which. Slack was chosen
+as the most common ops surface for a solo operator. The scope is post-only on
+purpose: a notifier does not need to read your conversations.
 
 LinkedIn is the deliberate exception. Every other write lands somewhere private
 (a calendar, a draft) or is trivially reversible; a public post is neither, so
@@ -288,7 +307,22 @@ sits **after** its loop's gate, and no seeded loop publishes to LinkedIn.
 | --- | --- | --- |
 | `calendar.schedule` | Calendar | Places approved posts at their publish times |
 | `gmail.draft` | Email | Saves the approved reply as a draft — never sends |
+| `sheets.log` | Sheets | Appends one row per run to a log spreadsheet |
 | `slides.deck` | Slides | Turns an approved outline into a deck |
+
+`sheets.log` stamps its own timestamp rather than letting the model supply one:
+a model-invented date in a log is worse than no date at all.
+
+### Gate notifications
+
+The reason a Chat connector earns its place. When a run enters `awaiting-go`,
+Thor posts to Slack with the loop name, the last artefact, and a link straight
+to `/loops`. Semi-autonomous work is only useful if you find out it needs you
+without going to look.
+
+Fire-and-forget by design: a chat outage must never hold up the engine or fail
+a run, and "not connected" is the normal case rather than an error worth
+shouting about.
 
 A tool that cannot act does **not** fail the run: the work upstream is still
 valid, and the artefact records exactly what went wrong.
@@ -321,7 +355,7 @@ reported as skipped: a missing key is a choice, a wrong ID is a bug.
 
 ## Tests
 
-`npm test` — 75 tests on the pure core, no API keys, via Node's built-in runner.
+`npm test` — 77 tests on the pure core, no API keys, via Node's built-in runner.
 
 They earned their keep on the first run by catching a **live routing bug**:
 `"what is our runway looking like"` routed to the Researcher rather than
@@ -333,8 +367,8 @@ enough to break a tie, never enough to beat a real domain term.
 Covered: attendance scoring and the near-scorer cutoff, model routing and the
 one-way escalation to Opus, the loop gate (including the regression that
 rejection must be terminal), tool argument validation and the two structural
-invariants above, the store driver seam, write serialisation under 50
-concurrent mutators, style metrics learned from real diffs, cadence arithmetic,
+invariants above, the store driver seam, compare-and-set under
+contention, write serialisation under 50 concurrent mutators, style metrics learned from real diffs, cadence arithmetic,
 and the Phoenix combine formula's negative branch.
 
 ## Fixed after review
@@ -381,13 +415,13 @@ was exercised against a local stand-in.
 Named honestly, because the gap between this and the real Apex is all
 integration work:
 
-- **Chat and Google Sheets** are unbuilt. Drive, Calendar, Gmail, Slides and
-  LinkedIn are wired. "Chat" in the source roster is ambiguous — Slack, Google
-  Chat and WhatsApp are three different integrations and nothing indicates
-  which.
-- **Horizontal scale.** The write chain is per-process; see Persistence.
+- **Google Chat and WhatsApp** are not built — Slack was chosen for "Chat".
+  WhatsApp in particular needs Meta Business verification, which is a process
+  rather than a patch.
 - **Model IDs are unverified against a live endpoint** in this environment —
   `npm run verify:models` is the tool, but it needs real keys.
+- **No retry or backoff on provider calls.** A transient 429 fails a loop step
+  today; the artefact records it honestly, but it should retry.
 
 - **No image generation.** The described "branded graphics rendered as code /
   photos via Imagen" path is not implemented.

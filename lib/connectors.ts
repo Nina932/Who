@@ -22,9 +22,11 @@ export type ConnectorId =
   | "google-calendar"
   | "gmail"
   | "google-slides"
-  | "linkedin";
+  | "google-sheets"
+  | "linkedin"
+  | "slack";
 
-export type OAuthProvider = "google" | "linkedin";
+export type OAuthProvider = "google" | "linkedin" | "slack";
 
 export interface ConnectorSpec {
   id: ConnectorId;
@@ -83,6 +85,29 @@ export const CONNECTORS: ConnectorSpec[] = [
     writes: true,
   },
   {
+    id: "google-sheets",
+    name: "Sheets",
+    provider: "google",
+    ownerAgentId: "analytics",
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive.file",
+    ],
+    description: "Append run outcomes to a log so the numbers live somewhere you can pivot.",
+    writes: true,
+  },
+  {
+    id: "slack",
+    name: "Chat",
+    provider: "slack",
+    ownerAgentId: "chief-of-staff",
+    // chat:write only — Thor speaks, it does not read your DMs.
+    scopes: ["chat:write", "channels:read"],
+    description:
+      "Tells you in Slack the moment a loop is holding at its gate. Post-only — no message history is read.",
+    writes: true,
+  },
+  {
     id: "linkedin",
     name: "LinkedIn",
     provider: "linkedin",
@@ -134,13 +159,21 @@ function providerConfig(provider: OAuthProvider): ProviderConfig {
           include_granted_scopes: "true",
         },
       }
-    : {
-        authUrl: "https://www.linkedin.com/oauth/v2/authorization",
-        tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
-        clientId: process.env.LINKEDIN_CLIENT_ID,
-        clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
-        extraAuthParams: {},
-      };
+    : provider === "linkedin"
+      ? {
+          authUrl: "https://www.linkedin.com/oauth/v2/authorization",
+          tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
+          clientId: process.env.LINKEDIN_CLIENT_ID,
+          clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
+          extraAuthParams: {},
+        }
+      : {
+          authUrl: "https://slack.com/oauth/v2/authorize",
+          tokenUrl: "https://slack.com/api/oauth.v2.access",
+          clientId: process.env.SLACK_CLIENT_ID,
+          clientSecret: process.env.SLACK_CLIENT_SECRET,
+          extraAuthParams: {},
+        };
 }
 
 export function providerConfigured(provider: OAuthProvider): boolean {
@@ -224,19 +257,34 @@ export async function exchangeCode(
     }
 
     const data = (await response.json()) as {
-      access_token: string;
+      access_token?: string;
       refresh_token?: string;
-      expires_in: number;
+      expires_in?: number;
       scope?: string;
+      // Slack's shape: ok/error at the top, bot token nested.
+      ok?: boolean;
+      error?: string;
+      authed_user?: { access_token?: string };
     };
+
+    if (spec.provider === "slack" && data.ok === false) {
+      return { ok: false, error: `slack: ${data.error ?? "authorisation refused"}` };
+    }
+
+    const token = data.access_token ?? data.authed_user?.access_token;
+    if (!token) return { ok: false, error: "no access token in the response" };
+
+    // Slack bot tokens do not expire unless rotation is enabled, so there is
+    // no refresh to schedule — parking the expiry far out is honest here.
+    const expiresIn = data.expires_in ?? (spec.provider === "slack" ? 60 * 60 * 24 * 3650 : 3600);
 
     await mutate<TokenStore, null>(TOKENS, {}, (current) => ({
       next: {
         ...current,
         [connectorId]: {
-          accessToken: data.access_token,
+          accessToken: token,
           refreshToken: data.refresh_token ?? current[connectorId]?.refreshToken,
-          expiresAt: Date.now() + data.expires_in * 1000,
+          expiresAt: Date.now() + expiresIn * 1000,
           scopes: data.scope?.split(" ") ?? CONNECTORS_BY_ID[connectorId].scopes,
           connectedAt: Date.now(),
         },
@@ -628,6 +676,98 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
     }
 
     return { ok: true, data: { id: response.headers.get("x-restli-id") ?? "posted" } };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "post failed" };
+  }
+}
+
+// ── Sheets ───────────────────────────────────────────────────────────────
+
+/**
+ * Append a row to a log spreadsheet, creating it on first use.
+ *
+ * The id is remembered so every later append lands in the same sheet rather
+ * than littering Drive with one spreadsheet per run.
+ */
+export async function appendToLog(
+  title: string,
+  row: string[],
+): Promise<CallOutcome<{ spreadsheetId: string; url: string }>> {
+  const known = await readCollection<Record<string, string>>("sheets", {});
+  let spreadsheetId = known[title];
+
+  if (!spreadsheetId) {
+    const created = await googleFetch<{ spreadsheetId: string }>(
+      "google-sheets",
+      "https://sheets.googleapis.com/v4/spreadsheets",
+      { method: "POST", body: JSON.stringify({ properties: { title } }) },
+    );
+    if (!created.ok) return created;
+
+    spreadsheetId = created.data.spreadsheetId;
+    await mutate<Record<string, string>, null>("sheets", {}, (current) => ({
+      next: { ...current, [title]: spreadsheetId as string },
+      result: null,
+    }));
+  }
+
+  const appended = await googleFetch<unknown>(
+    "google-sheets",
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { method: "POST", body: JSON.stringify({ values: [row] }) },
+  );
+  if (!appended.ok) return appended;
+
+  return {
+    ok: true,
+    data: {
+      spreadsheetId,
+      url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    },
+  };
+}
+
+// ── Slack ────────────────────────────────────────────────────────────────
+
+/**
+ * Post a message.
+ *
+ * Slack answers 200 with `{ok: false}` on failure, so the HTTP status alone is
+ * not enough to know whether anything was delivered.
+ */
+export async function postToSlack(
+  text: string,
+  channel?: string,
+): Promise<CallOutcome<{ ts: string }>> {
+  const token = await accessToken("slack");
+  if (!token) {
+    return {
+      ok: false,
+      needsConnection: true,
+      error: providerConfigured("slack")
+        ? "Slack is not connected."
+        : "Slack OAuth is not configured (SLACK_CLIENT_ID/SECRET).",
+    };
+  }
+
+  const target = channel ?? process.env.SLACK_DEFAULT_CHANNEL;
+  if (!target) {
+    return { ok: false, error: "No channel given and SLACK_DEFAULT_CHANNEL is not set." };
+  }
+
+  try {
+    const response = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel: target, text }),
+    });
+
+    const data = (await response.json()) as { ok: boolean; ts?: string; error?: string };
+    if (!data.ok) return { ok: false, error: `slack: ${data.error ?? "unknown error"}` };
+    return { ok: true, data: { ts: data.ts ?? "" } };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "post failed" };
   }
