@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Apex — autonomous AI co-founder",
+  title: "Thor — autonomous AI co-founder",
   description:
     "A voice-first cockpit for a workforce of specialist agents that learns, runs, and scales a solo business.",
 };

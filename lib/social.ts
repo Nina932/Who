@@ -49,15 +49,15 @@ export interface Attention {
 export const AUTONOMY_COPY: Record<Autonomy, { label: string; detail: string }> = {
   draft: {
     label: "Draft only",
-    detail: "Apex prepares the work and stops. Nothing leaves without you.",
+    detail: "Thor prepares the work and stops. Nothing leaves without you.",
   },
   approve: {
     label: "Approve to ship",
-    detail: "Apex runs the whole loop and waits at the final gate for a yes.",
+    detail: "Thor runs the whole loop and waits at the final gate for a yes.",
   },
   full: {
     label: "Full autonomy",
-    detail: "Apex runs and publishes inside the guardrails, then reports back.",
+    detail: "Thor runs and publishes inside the guardrails, then reports back.",
   },
 };
 

@@ -144,7 +144,7 @@ export default function PhoenixPage() {
             href="/"
             className="chip pointer-events-auto px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
           >
-            ← Apex
+            ← Thor
           </Link>
         </div>
       </header>

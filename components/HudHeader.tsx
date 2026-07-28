@@ -54,7 +54,7 @@ function Lamp({ label, on, tone = "alive" }: LampProps) {
 
 export interface HudHeaderProps {
   voiceState: VoiceState;
-  /** True once the operator has granted the mic and Apex is listening. */
+  /** True once the operator has granted the mic and Thor is listening. */
   voiceEngaged: boolean;
   /** True when replies are generated locally rather than by a live model. */
   local: boolean;
@@ -147,6 +147,12 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               Social command center
             </Link>
             <Link
+              href="/loops"
+              className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
+            >
+              Loops
+            </Link>
+            <Link
               href="/phoenix"
               className="chip-attend px-3 py-1.5 label transition-colors"
               style={{ color: "var(--color-attend)" }}
@@ -159,7 +165,7 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
 
       {/* Status lamps */}
       <div className="mt-6 flex flex-wrap items-center gap-x-7 gap-y-3">
-        <Lamp label="Apex" on />
+        <Lamp label="Thor" on />
         <Lamp label="Local" on={local} tone="signal" />
         <Lamp
           label="Voice"

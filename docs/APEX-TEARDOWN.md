@@ -205,6 +205,10 @@ signal.
 
 ## 9. What this repository is
 
+**Apex is Reznikov Engineering's product. This implementation is called Thor** —
+a distinct name, because it is an independent build rather than a copy carrying
+someone else's brand.
+
 A working implementation of the product described above, built from the analysis
 rather than from any of Reznikov Engineering's code — which was never
 accessible. It is an independent reconstruction of a publicly-demonstrated

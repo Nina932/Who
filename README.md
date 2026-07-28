@@ -1,18 +1,20 @@
-# Apex
+# Thor
 
 A voice-first cockpit for a workforce of specialist AI agents — an independent
 reconstruction of the product Reznikov Engineering demonstrates publicly as
-*"the autonomous AI co-founder that learns, runs, and scales your solo
-business."*
+Apex — *"the autonomous AI co-founder that learns, runs, and scales your solo
+business."* Their product is Apex; this implementation is Thor.
 
-The reasoning behind every design decision here is in
-**[`docs/APEX-TEARDOWN.md`](docs/APEX-TEARDOWN.md)** — read that first.
+Two docs sit behind this: **[`docs/APEX-TEARDOWN.md`](docs/APEX-TEARDOWN.md)**
+for the product analysis, and **[`docs/ENGINE.md`](docs/ENGINE.md)** for what
+actually runs — the model stack, the Loops Engine, memory and style learning,
+with the end-to-end transcripts that verify each one.
 
 ![The cockpit with a specialist attending](docs/screenshots/overview-attendance.png)
 
 ## The idea
 
-You talk. Apex decides *who* should answer, pulls that specialist into the
+You talk. Thor decides *who* should answer, pulls that specialist into the
 conversation in front of you, and tells you which of your own words caused it.
 There is no agent picker, because picking your own expert is the work you were
 trying to delegate.
@@ -29,7 +31,7 @@ background, and surfaces the matched terms. Amber is reserved for this and for
 nothing else.
 
 **Voice** — continuous recognition with a four-state floor model and a hard
-interrupt. Tapping while Apex is speaking cancels playback mid-sentence and
+interrupt. Tapping while Thor is speaking cancels playback mid-sentence and
 hands the floor straight back. A typed path runs through the identical
 orchestrator for when the room isn't quiet.
 
@@ -37,6 +39,11 @@ orchestrator for when the room isn't quiet.
 last: standing objectives that run on a cadence, each with an explicit autonomy
 level and a visible gate showing exactly where the machine will stop and wait
 for you.
+
+**Loops Engine** (`/loops`) — semi-autonomous workflows that really execute:
+each step runs on its assigned model, the run halts at a human review gate, and
+rejections and outcomes are turned into learnings that are injected into the
+next run. Weekly Business Review and Content Engine are seeded.
 
 **Phoenix** (`/phoenix`) — a separate, interactive 3D teardown of X's For You
 pipeline, built from the source xAI open-sourced in January 2026: two-tower
@@ -54,17 +61,21 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-It works with no configuration. Without an API key each specialist answers from
-its own charter, so attendance, voice, and every surface are fully
-demonstrable offline — replies are clearly marked `offline mode`.
+It works with no configuration: attendance, voice, style learning and every
+surface run offline. Model-backed steps report exactly which key they need
+rather than pretending.
 
-To put a live model behind the seats:
+For the full stack:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export APEX_MODEL=claude-sonnet-5   # optional
+export ANTHROPIC_API_KEY=sk-ant-...   # Opus (judgment), Sonnet (vision), Haiku (memory)
+export GOOGLE_API_KEY=...             # Gemini Flash (quick), Pro (hard)
 npm run dev
 ```
+
+Two decisions happen per turn, and they are orthogonal: **Specialist
+Attendance** picks who answers, **model routing** picks which brain they use.
+"Should we raise pricing?" escalates to Opus; "what time is it" rides Flash.
 
 Attendance is decided **before** the model is called, never by it. The routing
 stays cheap and inspectable, the cockpit lights up the right node the instant
@@ -78,12 +89,14 @@ vendor-prefixed elsewhere). Everything degrades to the typed path.
 
 ```
 app/
-  page.tsx              Overview cockpit
+  page.tsx              Overview cockpit (react-three-fiber)
+  loops/page.tsx        Loops Engine workspace
   social/page.tsx       Social Command Center
   phoenix/page.tsx      X For You pipeline — 3D teardown
-  api/apex/route.ts     Orchestrator endpoint
+  api/thor/route.ts     Orchestrator: attendance + routing + memory
 components/
-  Constellation.tsx     Canvas: core, orbit, link traffic, attendance rings
+  thor/CockpitScene.tsx 3D cockpit: nebula, displaced core, orbits, bloom
+  thor/shaders.ts       GLSL for the sky and the core
   HudHeader.tsx         Ambient context and status lamps
   SpecialistCallout.tsx Who was called in, and on which words
   VoiceStatus.tsx       Whose turn it is + the interrupt
@@ -94,6 +107,11 @@ components/
   phoenix/              react-three-fiber scene: five stages on camera rails
 lib/
   phoenix.ts            Retrieval, 19 heads, the published combine formula
+  models.ts             The stack: Flash / Pro / Opus / Sonnet / Haiku + routing
+  loops.ts              Loops Engine — executor, review gate, learnings
+  memory.ts             Durable facts: Haiku extraction, scored recall
+  style.ts              Voice learned from the drafts you edit
+  store.ts              Atomic JSON persistence under .thor/
   agents.ts             The roster — 18 seats, 4 families
   orchestrator.ts       Specialist Attendance scoring
   useVoice.ts           Turn-taking state machine
@@ -111,6 +129,9 @@ read from that one array.
 
 ## Status
 
-The roster's **integrations** — Drive, Email, Calendar, Chat — and **Memory** are
-drawn and inert. Wiring them to real accounts is the obvious next step, and
-nothing in the source material revealed how the original does it.
+Working: the model stack and routing, the Loops Engine (execution, gates,
+learnings), durable memory, style learning, and persistence.
+
+Not built: real connectors (Drive, Email, Calendar, LinkedIn), a scheduler to
+fire loops on their cadence, and image generation. See the end of
+[`docs/ENGINE.md`](docs/ENGINE.md) for the honest list.

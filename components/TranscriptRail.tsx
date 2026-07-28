@@ -58,7 +58,7 @@ export default function TranscriptRail({ turns }: TranscriptRailProps) {
                       : "var(--color-attend)",
                   }}
                 >
-                  {isOperator ? "You" : (agent?.name ?? "Apex")}
+                  {isOperator ? "You" : (agent?.name ?? "Thor")}
                 </span>
               </div>
               <p

@@ -1,6 +1,6 @@
 /**
  * Ambient context — the strip of the cockpit that is true whether or not you
- * are talking to Apex: time, weather, who you are, and one thing that
+ * are talking to Thor: time, weather, who you are, and one thing that
  * happened on this date. It exists to make the machine feel present rather
  * than summoned.
  */

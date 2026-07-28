@@ -1,13 +1,13 @@
 /**
  * Specialist Attendance.
  *
- * The behaviour the Reznikov post describes: you talk to Apex, and Apex
+ * The behaviour the Reznikov post describes: you talk to Thor, and Thor
  * decides — mid-conversation — which expert belongs in the room. The operator
  * never picks an agent from a menu. That routing decision is this file.
  *
  * Scoring is deliberately transparent (term hits, not embeddings) so the
  * cockpit can show *why* a specialist was called in. An LLM sits on top of
- * this in `app/api/apex/route.ts`, but it inherits the same roster and the
+ * this in `app/api/thor/route.ts`, but it inherits the same roster and the
  * same attendance decision rather than re-deciding on its own.
  */
 
@@ -106,7 +106,7 @@ export function decideAttendance(utterance: string): AttendanceDecision {
 /**
  * Offline reply generation.
  *
- * Apex is useless without a model behind it, but the cockpit must still be
+ * Thor is useless without a model behind it, but the cockpit must still be
  * demonstrable with no key present — so every specialist can answer in
  * character from its own charter. This is explicitly a stand-in: the shape of
  * the response (who spoke, what they own, what they'd do next) matches what

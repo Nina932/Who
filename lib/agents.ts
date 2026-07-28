@@ -1,13 +1,13 @@
 /**
- * The Apex roster.
+ * The Thor roster.
  *
- * Apex is not a chatbot with personas — it is a workforce with a hierarchy.
+ * Thor is not a chatbot with personas — it is a workforce with a hierarchy.
  * Four families sit at different depths around the core:
  *
  *   council      the standing brain trust; always in the room, cheap to consult
  *   operations   domain specialists who get *called in* on demand
  *   faculty      the system's own organs (memory, voice) rather than employees
- *   integration  outside surfaces Apex can reach through — not agents at all
+ *   integration  outside surfaces Thor can reach through — not agents at all
  *
  * `domains` drives Specialist Attendance: the orchestrator scores an incoming
  * utterance against these terms to decide who to pull into the conversation.
@@ -224,7 +224,7 @@ export const AGENTS: Agent[] = [
     id: "memory",
     name: "Memory",
     family: "faculty",
-    role: "Everything Apex has been told",
+    role: "Everything Thor has been told",
     charter:
       "The long-term store. Decisions, preferences, people, and the reasons behind past calls — so the workforce never asks you the same thing twice.",
     domains: [
@@ -271,7 +271,7 @@ export const AGENTS: Agent[] = [
     name: "Chat",
     family: "integration",
     role: "Messaging surfaces",
-    charter: "Bridges Apex into the messaging apps the operator already lives in.",
+    charter: "Bridges Thor into the messaging apps the operator already lives in.",
     domains: ["chat", "slack", "whatsapp", "telegram", "dm", "message"],
     angle: 55,
     orbit: 0.95,

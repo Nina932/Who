@@ -4,14 +4,14 @@
  * The Overview cockpit.
  *
  * One screen, no chrome, no sidebar: the core, the workforce around it, and
- * whatever context is true right now. Every other surface in Apex is reached
+ * whatever context is true right now. Every other surface in Thor is reached
  * from here and returns here.
  */
 
 import { useCallback, useRef, useState } from "react";
 import AgentInspector from "@/components/AgentInspector";
 import CommandDock from "@/components/CommandDock";
-import Constellation from "@/components/Constellation";
+import dynamic from "next/dynamic";
 import HudHeader from "@/components/HudHeader";
 import SpecialistCallout from "@/components/SpecialistCallout";
 import TranscriptRail from "@/components/TranscriptRail";
@@ -24,6 +24,16 @@ import {
   type Turn,
 } from "@/lib/orchestrator";
 import { useVoice } from "@/lib/useVoice";
+
+// WebGL cannot render on the server, and the scene is the whole page.
+const CockpitScene = dynamic(() => import("@/components/thor/CockpitScene"), {
+  ssr: false,
+  loading: () => (
+    <div className="absolute inset-0 grid place-items-center">
+      <span className="label-lit pulse-soft">Waking the core…</span>
+    </div>
+  ),
+});
 
 const EMPTY_ATTENDANCE: AttendanceDecision = {
   primaryId: null,
@@ -79,7 +89,7 @@ export default function Cockpit() {
       setAttendance(optimistic);
 
       try {
-        const response = await fetch("/api/apex", {
+        const response = await fetch("/api/thor", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ utterance: text, history, forceAgentId }),
@@ -152,7 +162,7 @@ export default function Cockpit() {
     <main className="relative h-screen w-screen overflow-hidden">
       {/* The workforce, always running behind everything else. */}
       <div className="absolute inset-0 z-0">
-        <Constellation
+        <CockpitScene
           primaryId={attendance.primaryId}
           supportingIds={attendance.supportingIds}
           voiceState={voice.state}

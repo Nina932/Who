@@ -4,7 +4,7 @@
  * The floor indicator.
  *
  * One chip, centred at the top of the cockpit, that always answers "whose
- * turn is it". While Apex is speaking it doubles as the interrupt: tapping
+ * turn is it". While Thor is speaking it doubles as the interrupt: tapping
  * kills playback and hands the floor straight back to the operator.
  */
 
