@@ -112,10 +112,11 @@ lib/
   loops.ts              Loops Engine — executor, review gate, learnings
   memory.ts             Durable facts: Haiku extraction, scored recall
   style.ts              Voice learned from the drafts you edit
-  store.ts              Atomic JSON persistence under .thor/
+  store.ts              Persistence: filesystem or Redis, with compare-and-set
   scheduler.ts          Cadence parsing and the tick that fires due loops
   tools.ts              Validated tool calls — where a loop touches the world
-  connectors.ts         Google OAuth + Drive / Calendar / Gmail calls
+  connectors.ts         OAuth + calls: Drive, Calendar, Gmail, Sheets, Slides,
+                        Slack, LinkedIn
   guard.ts              Origin and secret checks on mutating endpoints
   agents.ts             The roster — 18 seats, 4 families
   orchestrator.ts       Specialist Attendance scoring
@@ -154,8 +155,8 @@ runners:
 git mv .github/workflows/ci.yml.disabled .github/workflows/ci.yml
 ```
 
-Node's built-in runner over the pure core. They caught a live routing bug on
-their first run — see [`docs/ENGINE.md`](docs/ENGINE.md#tests).
+The tests run on Node's built-in runner over the pure core, and caught a live
+routing bug on their first run — see [`docs/ENGINE.md`](docs/ENGINE.md#tests).
 
 ## Status
 
