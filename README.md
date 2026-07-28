@@ -38,6 +38,15 @@ last: standing objectives that run on a cadence, each with an explicit autonomy
 level and a visible gate showing exactly where the machine will stop and wait
 for you.
 
+**Phoenix** (`/phoenix`) — a separate, interactive 3D teardown of X's For You
+pipeline, built from the source xAI open-sourced in January 2026: two-tower
+retrieval, the ranking transformer's candidate-isolation mask, all 19 action
+heads, and the weighted sum that becomes your feed. Move a signal or a weight
+and everything recomputes live. Full analysis in
+**[`docs/PHOENIX-TEARDOWN.md`](docs/PHOENIX-TEARDOWN.md)**.
+
+![The ranking stage attention mask](docs/screenshots/phoenix-ranking.png)
+
 ## Run it
 
 ```bash
@@ -71,6 +80,7 @@ vendor-prefixed elsewhere). Everything degrades to the typed path.
 app/
   page.tsx              Overview cockpit
   social/page.tsx       Social Command Center
+  phoenix/page.tsx      X For You pipeline — 3D teardown
   api/apex/route.ts     Orchestrator endpoint
 components/
   Constellation.tsx     Canvas: core, orbit, link traffic, attendance rings
@@ -81,7 +91,9 @@ components/
   TranscriptRail.tsx    Attributed conversation history
   AgentInspector.tsx    Per-agent charter and routing vocabulary
   social/               Platform cards, goal loop pipelines
+  phoenix/              react-three-fiber scene: five stages on camera rails
 lib/
+  phoenix.ts            Retrieval, 19 heads, the published combine formula
   agents.ts             The roster — 18 seats, 4 families
   orchestrator.ts       Specialist Attendance scoring
   useVoice.ts           Turn-taking state machine
