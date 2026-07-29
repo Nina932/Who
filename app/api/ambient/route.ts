@@ -32,9 +32,21 @@ function describe(code: number): string {
 }
 
 export async function GET() {
+  // No coordinates configured means no weather. Better an absent readout than
+  // an invented one.
+  if (!process.env.THOR_LAT || !process.env.THOR_LON) {
+    return NextResponse.json({
+      city: AMBIENT.city,
+      temperature: 0,
+      conditions: "",
+      live: false,
+      reason: "Set THOR_LAT and THOR_LON to show local weather.",
+    });
+  }
+
   const params = new URLSearchParams({
-    latitude: String(process.env.THOR_LAT ?? 32.0853),
-    longitude: String(process.env.THOR_LON ?? 34.7818),
+    latitude: String(process.env.THOR_LAT),
+    longitude: String(process.env.THOR_LON),
     current: "temperature_2m,weather_code",
     timezone: "auto",
   });
@@ -60,13 +72,12 @@ export async function GET() {
     });
   } catch (error) {
     console.error("ambient: weather unavailable", error);
-    // Fall back to the configured defaults, but say they are not live so the
-    // UI can avoid presenting a constant as a measurement.
     return NextResponse.json({
       city: AMBIENT.city,
-      temperature: AMBIENT.temperature,
-      conditions: AMBIENT.conditions,
+      temperature: 0,
+      conditions: "",
       live: false,
+      reason: "Weather service unreachable.",
     });
   }
 }

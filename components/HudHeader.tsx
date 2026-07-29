@@ -12,7 +12,7 @@ import {
   AMBIENT,
   formatClock,
   formatDate,
-  greeting,
+  greetingLine,
   onThisDay,
 } from "@/lib/ambient";
 import type { VoiceState } from "@/lib/useVoice";
@@ -63,17 +63,14 @@ export interface HudHeaderProps {
 interface Weather {
   temperature: number;
   conditions: string;
+  city: string;
   live: boolean;
 }
 
 export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeaderProps) {
   // Weather was a hardcoded constant presented as a live reading. It is now
   // fetched; if the fetch fails the reading is dimmed rather than faked.
-  const [weather, setWeather] = useState<Weather>({
-    temperature: AMBIENT.temperature,
-    conditions: AMBIENT.conditions,
-    live: false,
-  });
+  const [weather, setWeather] = useState<Weather | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +99,7 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
     <header className="pointer-events-none relative z-20 px-8 pt-5">
       {/* Crown scan line */}
       <div className="relative mb-6 h-px w-full overflow-hidden">
-        <div className="rule absolute inset-0 opacity-40" />
+        <div className="aurora-rule absolute inset-0 opacity-50" />
         <div
           className="scan-sweep absolute top-0 h-px w-1/4"
           style={{
@@ -117,11 +114,12 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
         {/* Time */}
         <div className="min-w-[190px]">
           <div
-            className="glow-text font-light tabular-nums"
+            className="aurora glow-text tabular-nums"
             style={{
-              fontSize: 54,
+              fontSize: 56,
+              fontWeight: 200,
               lineHeight: 1,
-              letterSpacing: "0.04em",
+              letterSpacing: "0.02em",
               fontFamily: "var(--font-display)",
             }}
           >
@@ -130,44 +128,40 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
           <div className="label mt-2">{now ? formatDate(now) : " "}</div>
         </div>
 
-        {/* Weather */}
-        <div className="hidden min-w-[210px] sm:block">
-          <div
-            className="font-light"
-            style={{
-              fontSize: 34,
-              lineHeight: 1,
-              color: "var(--color-signal)",
-              fontFamily: "var(--font-display)",
-            }}
-          >
-            {weather.temperature}°C
+        {/* Weather — omitted entirely when there is no live reading, rather
+            than showing a hardcoded number dressed up as a measurement. */}
+        {weather?.live ? (
+          <div className="hidden min-w-[210px] sm:block">
+            <div
+              className="font-light"
+              style={{
+                fontSize: 34,
+                lineHeight: 1,
+                color: "var(--color-signal)",
+                fontFamily: "var(--font-display)",
+              }}
+            >
+              {weather.temperature}°C
+            </div>
+            <div className="label mt-2">
+              {[weather.city, weather.conditions].filter(Boolean).join(" · ")}
+            </div>
           </div>
-          <div
-            className="label mt-2"
-            title={weather.live ? undefined : "Live reading unavailable — showing the configured default"}
-            style={weather.live ? undefined : { opacity: 0.55 }}
-          >
-            {AMBIENT.city} · {weather.conditions}
-            {weather.live ? "" : " · not live"}
-          </div>
-        </div>
+        ) : null}
 
         {/* Greeting + nav */}
         <div className="flex-1 text-right">
           <div
-            className="font-light uppercase"
+            className="aurora uppercase"
             style={{
-              fontSize: 22,
+              fontSize: 21,
+              fontWeight: 300,
               lineHeight: 1.2,
-              letterSpacing: "0.14em",
-              color: "var(--color-ink-soft)",
+              letterSpacing: "0.12em",
               fontFamily: "var(--font-display)",
             }}
           >
-            {now ? greeting(now.getHours()) : "Standing by"},
-            <br />
-            {AMBIENT.operator}
+            {now ? greetingLine(now.getHours(), AMBIENT.operator) : "Standing by"}
           </div>
 
           <nav className="pointer-events-auto mt-4 flex items-center justify-end gap-2">

@@ -196,6 +196,27 @@ The consequence worth knowing: **the mutator must be a pure function of
 `current`**, because it can be re-run. Side effects inside it would happen more
 than once.
 
+## 6a. Voice character, and its ceiling
+
+The target is the Transformers register: deep, slow, mechanical. The browser
+gives three levers — `pitch`, `rate`, and which installed voice is used — and
+the defaults sit at the bottom of all three: pitch `0` (the spec's floor), rate
+`0.78`, and the deepest English voice it can find (David or Mark on Windows,
+Daniel or Alex on macOS).
+
+**That gets the register, not the timbre.** The metallic quality in the films
+is ring modulation, distortion and layered detune applied to a recorded
+performance. It cannot be done to `SpeechSynthesis` output: browsers do not
+expose that audio to a Web Audio graph, so there is no node to insert an
+effect into. This is a platform limitation, not a missing feature.
+
+The path that does reach it: use a TTS API that returns an audio buffer
+(ElevenLabs, OpenAI, Google Cloud), decode it into Web Audio, and run it
+through `WaveShaper` for distortion, a ring modulator built from an oscillator
+and a `GainNode`, and a short convolution reverb. That is a real chunk of work
+and needs a key, so it is not built — but nothing in the current design blocks
+it, since `speakChunk` is the only place audio is produced.
+
 ## 7. The scheduler
 
 [`lib/scheduler.ts`](../lib/scheduler.ts). Cadences were declared and nothing

@@ -6,18 +6,38 @@
  */
 
 export interface AmbientConfig {
+  /** Empty means the greeting simply omits a name. */
   operator: string;
+  /** Empty means the weather line omits a place. */
   city: string;
-  /** Celsius. */
+  /** Celsius. Only shown when a live reading is unavailable. */
   temperature: number;
   conditions: string;
 }
 
+/**
+ * Whose cockpit this is.
+ *
+ * Deliberately blank by default. An earlier version hardcoded a name and a
+ * city taken from the reference screenshots, which meant every install greeted
+ * someone else's operator in someone else's city. A cockpit that gets this
+ * wrong is worse than one that says nothing.
+ *
+ * Set in `.env.local`:
+ *
+ *   NEXT_PUBLIC_THOR_OPERATOR=Nina
+ *   NEXT_PUBLIC_THOR_CITY=Tbilisi
+ *   THOR_LAT=41.7151
+ *   THOR_LON=44.8271
+ *
+ * NEXT_PUBLIC_ is required on the first two because the header renders them in
+ * the browser.
+ */
 export const AMBIENT: AmbientConfig = {
-  operator: "Ruben",
-  city: "Tel Aviv",
-  temperature: 24,
-  conditions: "Partly cloudy",
+  operator: process.env.NEXT_PUBLIC_THOR_OPERATOR ?? "",
+  city: process.env.NEXT_PUBLIC_THOR_CITY ?? "",
+  temperature: 0,
+  conditions: "",
 };
 
 export function greeting(hour: number): string {
@@ -25,6 +45,11 @@ export function greeting(hour: number): string {
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";
+}
+
+/** The greeting with the operator's name, or without it if none is set. */
+export function greetingLine(hour: number, operator: string): string {
+  return operator.trim() ? `${greeting(hour)}, ${operator.trim()}` : greeting(hour);
 }
 
 const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];

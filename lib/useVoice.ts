@@ -17,6 +17,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
+/**
+ * How Thor sounds. Tunable without touching the code:
+ *
+ *   NEXT_PUBLIC_THOR_VOICE_PITCH=0    0 is the deepest the spec allows
+ *   NEXT_PUBLIC_THOR_VOICE_RATE=0.78  below ~0.7 diction starts to smear
+ *   NEXT_PUBLIC_THOR_VOICE="Microsoft David - English (United States)"
+ */
+const VOICE = {
+  pitch: Number(process.env.NEXT_PUBLIC_THOR_VOICE_PITCH ?? 0),
+  rate: Number(process.env.NEXT_PUBLIC_THOR_VOICE_RATE ?? 0.78),
+};
+
 // The Web Speech API is still vendor-prefixed and unversioned in lib.dom, so
 // we describe only the surface we touch.
 interface SpeechRecognitionLike {
@@ -154,6 +166,54 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     setState(wantListeningRef.current ? "listening" : "idle");
   }, []);
 
+  // ── Voice character ─────────────────────────────────────────────────────
+  //
+  // Aiming for the Transformers register: deep, slow, mechanical. What the
+  // browser gives us is pitch, rate and voice choice — real metallic timbre
+  // needs ring modulation and distortion, and SpeechSynthesis output cannot be
+  // routed into a Web Audio graph, so that is not reachable from here. See
+  // docs/ENGINE.md for the path that is.
+  //
+  // Within those limits: the deepest installed voice, pitch at the floor, and
+  // a rate slow enough to land like a pronouncement rather than a readout.
+  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    const choose = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) return;
+
+      const named = process.env.NEXT_PUBLIC_THOR_VOICE;
+      if (named) {
+        const exact = voices.find((v) => v.name === named);
+        if (exact) {
+          voiceRef.current = exact;
+          return;
+        }
+      }
+
+      // Deep male voices, in rough order of how low they actually sit.
+      // "David" and "Mark" ship with Windows; "Daniel" and "Alex" with macOS.
+      const preferred = ["david", "mark", "daniel", "alex", "george", "rishi"];
+      const english = voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
+
+      voiceRef.current =
+        preferred
+          .map((name) => english.find((v) => v.name.toLowerCase().includes(name)))
+          .find(Boolean) ??
+        english[0] ??
+        voices[0] ??
+        null;
+    };
+
+    choose();
+    // Chrome populates the list asynchronously, often after first paint.
+    window.speechSynthesis.addEventListener("voiceschanged", choose);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", choose);
+  }, []);
+
   // ── Incremental speech ──────────────────────────────────────────────────
   // SpeechSynthesis queues natively, so streamed sentences can be enqueued as
   // they complete. State returns to listening only when the queue drains AND
@@ -175,8 +235,10 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     if (!spoken) return;
 
     const utterance = new SpeechSynthesisUtterance(spoken);
-    utterance.rate = 1.03;
-    utterance.pitch = 0.95;
+    if (voiceRef.current) utterance.voice = voiceRef.current;
+    // 0 is the floor the spec allows, and every engine honours it.
+    utterance.pitch = VOICE.pitch;
+    utterance.rate = VOICE.rate;
     pendingRef.current += 1;
 
     const settle = () => {
@@ -214,8 +276,9 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     }
 
     const utterance = new SpeechSynthesisUtterance(spoken);
-    utterance.rate = 1.03;
-    utterance.pitch = 0.95;
+    if (voiceRef.current) utterance.voice = voiceRef.current;
+    utterance.pitch = VOICE.pitch;
+    utterance.rate = VOICE.rate;
     utterance.onstart = () => setState("speaking");
     utterance.onend = () => setState(wantListeningRef.current ? "listening" : "idle");
     utterance.onerror = () => setState(wantListeningRef.current ? "listening" : "idle");

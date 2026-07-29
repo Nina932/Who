@@ -13,7 +13,7 @@
  * eye needs.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Bloom, EffectComposer, Noise, Vignette } from "@react-three/postprocessing";
@@ -560,6 +560,37 @@ function CameraRig({ focusId }: { focusId: string | null }) {
 
 // ── Scene ────────────────────────────────────────────────────────────────
 
+/**
+ * Post-processing is the single most fragile thing in this scene: it needs
+ * float render targets and a healthy WebGL2 context, and when it cannot get
+ * them the composer happily renders a black frame while the HTML overlays keep
+ * drawing — which looks exactly like a broken app rather than a missing
+ * effect.
+ *
+ * So it is treated as an enhancement, not a dependency. If it throws, it is
+ * dropped and the scene renders unbloomed, which is why every material below
+ * is bright enough to read on its own.
+ */
+class EffectsBoundary extends Component<
+  { onFailure: () => void; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("thor: post-processing disabled —", error);
+    this.props.onFailure();
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 export interface CockpitSceneProps {
   primaryId: string | null;
   supportingIds: string[];
@@ -577,12 +608,27 @@ export default function CockpitScene({
 }: CockpitSceneProps) {
   const energy = ENERGY[voiceState];
 
+  // Effects start on and are switched off permanently the first time they
+  // fail, rather than retried every frame.
+  const [effects, setEffects] = useState(true);
+
   return (
     <Canvas
       camera={{ position: [0, 3, 34], fov: 55, near: 0.1, far: 300 }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
       dpr={[1, 2]}
       onPointerMissed={() => onSelect(null)}
+      onCreated={({ gl }) => {
+        // A WebGL1-only context cannot drive the composer; skip it up front
+        // instead of waiting for it to fail.
+        const isWebGL2 =
+          typeof WebGL2RenderingContext !== "undefined" &&
+          gl.getContext() instanceof WebGL2RenderingContext;
+        if (!isWebGL2) {
+          console.warn("thor: WebGL2 unavailable — running without post-processing");
+          setEffects(false);
+        }
+      }}
     >
       <Nebula energy={energy} />
       <DustField />
@@ -596,16 +642,20 @@ export default function CockpitScene({
       />
       <CameraRig focusId={primaryId} />
 
-      <EffectComposer>
-        <Bloom
-          intensity={0.62 + energy * 0.4}
-          luminanceThreshold={0.45}
-          luminanceSmoothing={0.22}
-          mipmapBlur
-        />
-        <Vignette offset={0.28} darkness={0.72} />
-        <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.11} />
-      </EffectComposer>
+      {effects ? (
+        <EffectsBoundary onFailure={() => setEffects(false)}>
+          <EffectComposer>
+            <Bloom
+              intensity={0.62 + energy * 0.4}
+              luminanceThreshold={0.45}
+              luminanceSmoothing={0.22}
+              mipmapBlur
+            />
+            <Vignette offset={0.28} darkness={0.72} />
+            <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.11} />
+          </EffectComposer>
+        </EffectsBoundary>
+      ) : null}
     </Canvas>
   );
 }

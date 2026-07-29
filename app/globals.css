@@ -19,6 +19,13 @@
   --color-signal-dim: #1c8d9c;
   --color-signal-deep: #0d3f49;
 
+  /* The reference photo is not one blue — it runs deep indigo through teal to
+     a hot white core. These are the stops that gradient moves between. */
+  --color-abyss: #1b2a6b;
+  --color-violet: #6b4ce0;
+  --color-aqua: #22d3ee;
+  --color-ice: #b9fbff;
+
   --color-attend: #f2c14e;
   --color-attend-dim: #8a6c22;
 
@@ -29,11 +36,15 @@
   --color-ink-soft: #92abb6;
   --color-ink-faint: #566a74;
 
+  /* Monospace read as a terminal, not as instrumentation. These are the
+     humanist UI faces already on macOS, Windows and Linux, so there is no
+     webfont to download and nothing to shift on load. */
   --font-hud:
-    ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas,
-    monospace;
+    "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system,
+    ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
   --font-display:
-    "Helvetica Neue", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    "Segoe UI Variable Display", "SF Pro Display", "Inter", -apple-system,
+    ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
 }
 
 :root {
@@ -53,17 +64,29 @@ body {
   overflow: hidden;
 }
 
-/* The cockpit sits in a shallow well of light rather than on flat black. */
+/* The cockpit sits in a shallow well of light rather than on flat black, and
+   the well drifts — three offset radial pools moving on different periods, so
+   the background never resolves into a static gradient. */
 .field-vignette {
   background:
-    radial-gradient(
-      120% 90% at 50% 55%,
-      rgba(63, 224, 240, 0.09) 0%,
-      rgba(63, 224, 240, 0.03) 38%,
-      transparent 70%
-    ),
-    radial-gradient(80% 60% at 50% 120%, rgba(63, 224, 240, 0.06), transparent 70%),
+    radial-gradient(90% 70% at 30% 20%, rgba(107, 76, 224, 0.13), transparent 60%),
+    radial-gradient(80% 60% at 75% 70%, rgba(34, 211, 238, 0.11), transparent 62%),
+    radial-gradient(120% 90% at 50% 110%, rgba(27, 42, 107, 0.35), transparent 70%),
     var(--color-void);
+  background-size: 200% 200%, 200% 200%, 200% 200%, auto;
+  animation: field-drift 48s ease-in-out infinite alternate;
+}
+
+@keyframes field-drift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 50% 100%;
+  }
+  50% {
+    background-position: 40% 30%, 60% 60%, 45% 90%;
+  }
+  100% {
+    background-position: 100% 60%, 0% 20%, 55% 100%;
+  }
 }
 
 /* Hairline rules that read as etched glass, not as borders. */
@@ -80,18 +103,63 @@ body {
 
 .label {
   text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 10px;
+  letter-spacing: 0.18em;
+  font-size: 10.5px;
+  font-weight: 500;
   line-height: 1;
   color: var(--color-ink-faint);
 }
 
 .label-lit {
   text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 10px;
+  letter-spacing: 0.18em;
+  font-size: 10.5px;
+  font-weight: 600;
   line-height: 1;
   color: var(--color-signal);
+}
+
+/* Colour that moves through itself rather than sitting still. Used on the
+   few things that should feel alive — the clock, section titles. */
+.aurora {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-ice) 0%,
+    var(--color-aqua) 22%,
+    var(--color-signal) 44%,
+    var(--color-violet) 68%,
+    var(--color-aqua) 86%,
+    var(--color-ice) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: aurora-shift 14s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-shift {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+/* The same movement as a hairline, for rules and underscores. */
+.aurora-rule {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-violet),
+    var(--color-aqua),
+    var(--color-ice),
+    var(--color-aqua),
+    transparent
+  );
+  background-size: 300% 100%;
+  animation: aurora-shift 11s ease-in-out infinite alternate;
 }
 
 .chip {
@@ -122,7 +190,7 @@ body {
 }
 
 .glow-text {
-  text-shadow: 0 0 18px rgba(63, 224, 240, 0.45);
+  filter: drop-shadow(0 0 22px rgba(63, 224, 240, 0.35));
 }
 
 /* The scan line that crowns the whole cockpit. */
@@ -183,7 +251,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .scan-sweep,
   .pulse-soft,
-  .rise-in {
+  .rise-in,
+  .aurora,
+  .aurora-rule,
+  .field-vignette {
     animation: none;
   }
 }
