@@ -123,6 +123,8 @@ export function SurfaceHeader({
 
       <nav className="mt-4 flex flex-wrap gap-2">
         {[
+          ["/brief", "Brief"],
+          ["/products", "Products"],
           ["/today", "Today"],
           ["/cases", "Cases"],
           ["/waiting", "Waiting"],

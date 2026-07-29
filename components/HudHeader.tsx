@@ -176,6 +176,8 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
             {/* The operational surfaces, in the order they answer questions:
                 what's mine, what exists, who's holding what, what fits. */}
             {[
+              ["/brief", "Brief"],
+              ["/products", "Products"],
               ["/today", "Today"],
               ["/cases", "Cases"],
               ["/waiting", "Waiting"],

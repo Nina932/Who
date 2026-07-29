@@ -115,6 +115,12 @@ body {
   color: var(--color-ink-faint);
 }
 
+/* Labels are set on a single line by default. This variant is for the few
+   that legitimately wrap — a falsifier is a sentence, not a tag. */
+.label-flow {
+  line-height: 1.7;
+}
+
 .label-lit {
   text-transform: uppercase;
   letter-spacing: 0.18em;

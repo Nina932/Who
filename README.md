@@ -5,8 +5,10 @@ reconstruction of the product Reznikov Engineering demonstrates publicly as
 Apex — *"the autonomous AI co-founder that learns, runs, and scales your solo
 business."* Their product is Apex; this implementation is Thor.
 
-Three docs sit behind this: **[`docs/CASES.md`](docs/CASES.md)** for the
-operational core — cases, events, whose turn it is;
+Four docs sit behind this: **[`docs/ASSISTANT.md`](docs/ASSISTANT.md)** for
+the assistant — typed memory, product state, the brief and the intelligence
+filter; **[`docs/CASES.md`](docs/CASES.md)** for the operational core beneath
+it — cases, events, whose turn it is;
 **[`docs/APEX-TEARDOWN.md`](docs/APEX-TEARDOWN.md)** for the product analysis;
 and **[`docs/ENGINE.md`](docs/ENGINE.md)** for what actually runs — the model
 stack, the Loops Engine, memory and style learning, with the end-to-end
@@ -26,6 +28,30 @@ trying to delegate.
 **Overview** — one full-bleed canvas. A live core with eighteen agents in orbit,
 ambient context (clock, weather, greeting, almanac), three status lamps, and a
 transcript rail that stamps every reply with the seat it came from.
+
+**Brief** (`/brief`) — the assistant, and the front door. Your day, derived
+rather than composed: every item traces to a case's turn, a release blocker or
+a dated promise, and carries why it matters, why *today*, and what delaying it
+costs. It states your realistic capacity, shows what it moved out of today and
+which test that work failed, and names anything you have skipped three briefs
+running.
+
+It gives the blocker hour to exactly one product and says why — a day split
+across two stuck products unsticks neither, and scheduling both would
+contradict the advice the same system gives about running too many things.
+
+**Products** (`/products`) — where each product actually is, how long it has
+been there, and whether the milestone it claims to be pursuing has anything
+behind it. Seven rules watch for the failure that is invisible day to day:
+a phase held too long, a blocker carried rather than cleared, surfaces added
+*after* a blocker opened, a milestone with no evidenced exit condition.
+
+Every recommendation carries a reason, its evidence, a trade-off, a derived
+confidence, and — required — what would change it. Advice you cannot argue
+with is advice you cannot check. Underneath is memory that keeps a fact, a
+decision, a hypothesis and a guess apart by construction: a hypothesis can
+never be cited as evidence, and confidence is capped by the weakest link in
+the chain. Full write-up in **[`docs/ASSISTANT.md`](docs/ASSISTANT.md)**.
 
 **Cases** (`/cases`, `/today`, `/waiting`) — the operational core, and the
 thing the rest of the product now sits on top of. A **case** is one commitment
@@ -177,6 +203,9 @@ app/
   loops/page.tsx        Loops Engine workspace
   social/page.tsx       Social Command Center
   connect/page.tsx      Connector status, OAuth, live probes
+  brief/page.tsx        The assistant: your day, derived and explained
+  products/page.tsx     Product phase, blockers, milestone evidence, advice
+  api/assistant/route.ts  Brief, product state, knowledge, intelligence
   api/cases/route.ts    The case ledger — reads project, writes append
   api/thor/route.ts     Orchestrator: attendance + routing + memory
 components/
@@ -191,6 +220,12 @@ components/
   AgentInspector.tsx    Per-agent charter and routing vocabulary
   social/               Platform cards, goal loop pipelines
 lib/
+  knowledge.ts          Typed memory: fact / decision / hypothesis / guess
+  advisory.ts           The seven-field shape every recommendation must take
+  products.ts           Product phase, blockers, exit conditions, drift rules
+  brief.ts              The derived day, the cut, avoidance, horizons
+  signals.ts            Technology and market intelligence, filtered
+  assistant-store.ts    Assistant persistence (server only)
   cases.ts              Cases, events, the workflow, whose turn it is (pure)
   case-store.ts         Persistence and interpretation (server only)
   priority.ts           Factors, context, ranking under an hours budget
@@ -222,7 +257,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 122 tests + build, no API keys needed
+npm run verify        # typecheck + 217 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```
@@ -246,8 +281,10 @@ routing bug on their first run — see [`docs/ENGINE.md`](docs/ENGINE.md#tests).
 
 ## Status
 
-Working: the case ledger (event-sourced, with the turn model and the patience
-policy), the model stack and routing, the Loops Engine (execution, gates,
+Working: the assistant layer (typed memory with an enforced evidence chain,
+product-drift rules, the derived brief, the intelligence filter), the case
+ledger (event-sourced, with the turn model and the patience policy), the model
+stack and routing, the Loops Engine (execution, gates,
 learnings), the scheduler, Google connectors (Drive, Calendar, Gmail) over a
 real OAuth flow, durable memory, style learning, persistence, and write
 protection on every mutating endpoint.
@@ -260,7 +297,9 @@ LinkedIn; image generation is wired to Imagen. State runs on the filesystem by
 default or Upstash Redis — with compare-and-set, so several instances can share
 one store.
 
-Not built: the five loops beyond lead-to-cash; events arriving *from*
+Not built: nothing writes to the intelligence feed — the filter is real and
+the source is not; no calendar, so capacity says as much rather than assuming
+an empty day; the five loops beyond lead-to-cash; events arriving *from*
 connectors rather than from a person pressing a button; per-counterparty
 calibration of the patience thresholds; Google Chat and WhatsApp; and
 retry/backoff on provider calls. See the end of

@@ -1,0 +1,438 @@
+"use client";
+
+/**
+ * The brief — the assistant's face.
+ *
+ * Everything here was derived on the server from cases, product state and
+ * dated commitments. Nothing was composed. That is why every item can show
+ * why it matters, why today, and what delaying it costs: those are fields,
+ * not phrasing.
+ *
+ * The two sections most tools would leave out are the ones worth having. What
+ * was *cut* from today, with the test it failed. And what you have skipped
+ * three days running, which is information about you rather than about the
+ * task.
+ */
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { SurfaceHeader } from "@/components/cases/parts";
+import type { Advisory } from "@/lib/advisory";
+import type { Brief } from "@/lib/brief";
+import type { Entry } from "@/lib/knowledge";
+import type { Product } from "@/lib/products";
+import { VERDICT_LABEL, VERDICT_MEANING, type Classified } from "@/lib/signals";
+
+interface State {
+  brief: Brief;
+  alerts: Classified[];
+  digest: Classified[];
+  entries: Entry[];
+  products: Product[];
+  problems: string[];
+  capacity: { plannedHours: number; bookedHours: number | null };
+}
+
+const CONFIDENCE_COLOR: Record<string, string> = {
+  high: "var(--color-alive)",
+  medium: "var(--color-signal)",
+  low: "var(--color-attend)",
+  none: "var(--color-alert)",
+};
+
+const VERDICT_COLOR: Record<string, string> = {
+  "act-now": "var(--color-alert)",
+  "evaluate-soon": "var(--color-signal)",
+  watch: "var(--color-ink-soft)",
+  "ignore-for-now": "var(--color-ink-faint)",
+};
+
+export default function BriefPage() {
+  const [state, setState] = useState<State | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [openAdvisory, setOpenAdvisory] = useState<string | null>(null);
+  const [showDigest, setShowDigest] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch("/api/assistant", { cache: "no-store" });
+      if (response.ok) setState((await response.json()) as State);
+    } catch {
+      /* rendered as an empty brief below */
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = useCallback(async (payload: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) setState((await response.json()) as State);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  if (!state) {
+    return (
+      <main className="h-screen w-screen overflow-y-auto">
+        <div className="mx-auto max-w-[1000px] px-8 pt-6">
+          <SurfaceHeader title="Brief" />
+          <p className="label mt-10">deriving…</p>
+        </div>
+      </main>
+    );
+  }
+
+  const { brief, alerts, digest, products, problems } = state;
+  const empty = brief.items.length === 0 && products.length === 0;
+
+  return (
+    <main className="h-screen w-screen overflow-y-auto">
+      <div className="mx-auto max-w-[1000px] px-8 pb-24 pt-6">
+        <SurfaceHeader
+          title="Brief"
+          right={
+            <span className="label">
+              {Math.round(brief.committedMinutes / 6) / 10}h planned of{" "}
+              {brief.capacity.realisticHours}h
+            </span>
+          }
+        />
+
+        {/* An unsound evidence chain is shown, never swallowed. */}
+        {problems.length > 0 ? (
+          <div className="panel mt-6 rounded-xl p-4" style={{ borderColor: "rgba(255,107,107,0.4)" }}>
+            <div className="label-lit" style={{ color: "var(--color-alert)" }}>
+              The knowledge base has {problems.length} unsound link
+              {problems.length === 1 ? "" : "s"}
+            </div>
+            <ul className="mt-2 space-y-1">
+              {problems.map((p) => (
+                <li key={p} className="text-[12px]" style={{ color: "var(--color-ink-soft)" }}>
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <p
+          className="mt-7 text-[22px] leading-[1.35]"
+          style={{ color: "var(--color-ink)", fontFamily: "var(--font-display)" }}
+        >
+          {brief.greeting}
+        </p>
+        <p className="mt-2 max-w-[70ch] text-[13px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+          You have {brief.capacity.realisticHours} hours of realistic capacity.{" "}
+          {brief.capacity.note}
+        </p>
+
+        {empty ? (
+          <div className="panel mt-8 rounded-xl p-8">
+            <div className="label-lit">Nothing to brief on yet</div>
+            <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+              The brief is derived from open cases, product state and dated
+              commitments — it has none of those to read. Load a worked example
+              set, or open a case from the Cases screen.
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void act({ action: "seed-examples" })}
+              className="chip mt-5 px-4 py-2 label transition-colors hover:text-[color:var(--color-signal)] disabled:opacity-40"
+            >
+              {busy ? "loading…" : "Load examples"}
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* ── Today ─────────────────────────────────────────────── */}
+            <section className="mt-8">
+              <div className="label-lit">Today</div>
+              {brief.items.length === 0 ? (
+                <p className="mt-3 text-[13px]" style={{ color: "var(--color-ink-soft)" }}>
+                  Nothing clears the bar for today. Everything open is with
+                  someone else, booked, or blocked.
+                </p>
+              ) : (
+                <ol className="mt-3 space-y-3">
+                  {brief.items.map((item, index) => (
+                    <li key={item.key} className="panel rounded-xl p-5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <span
+                            className="mt-0.5 text-[11px] tabular-nums"
+                            style={{ color: "var(--color-signal)", width: 18 }}
+                          >
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-[14px]" style={{ color: "var(--color-ink)" }}>
+                              {item.title}
+                            </div>
+                            <dl className="mt-2 space-y-1">
+                              <Line label="Why" value={item.matters} />
+                              <Line label="Why now" value={item.now} />
+                              <Line label="If delayed" value={item.ifDelayed} />
+                            </dl>
+                            {item.appearances >= 3 ? (
+                              <p className="mt-2 text-[12px]" style={{ color: "var(--color-attend)" }}>
+                                This is the {item.appearances}
+                                {item.appearances === 3 ? "rd" : "th"} brief in a row it has
+                                appeared in. Either do it, schedule it, or drop it.
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-[13px] tabular-nums" style={{ color: "var(--color-signal)" }}>
+                            {item.minutes}m
+                          </div>
+                          <div className="label mt-1">{item.subject}</div>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+
+            {/* Which product got the blocker hour, and why not the others. */}
+            {brief.focus ? (
+              <p className="mt-4 max-w-[72ch] text-[12px] leading-relaxed" style={{ color: "var(--color-ink-faint)" }}>
+                {brief.focus.note}
+              </p>
+            ) : null}
+
+            {/* ── What was cut ──────────────────────────────────────── */}
+            {brief.deferred.length > 0 ? (
+              <section className="mt-8">
+                <div className="label-lit" style={{ color: "var(--color-ink-faint)" }}>
+                  Moved out of today · {brief.deferred.length}
+                </div>
+                <ul className="mt-3 space-y-1.5">
+                  {brief.deferred.map((row) => (
+                    <li key={row.key} className="flex flex-wrap items-baseline gap-x-3 px-1">
+                      <span className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+                        {row.title}
+                      </span>
+                      <span className="label">— {row.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {/* ── Advice ────────────────────────────────────────────── */}
+            {brief.advisories.length > 0 ? (
+              <section className="mt-9">
+                <div className="label-lit">What I would change</div>
+                <ul className="mt-3 space-y-2.5">
+                  {brief.advisories.map((advisory) => (
+                    <li key={advisory.id} className="panel rounded-xl p-4">
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        onClick={() =>
+                          setOpenAdvisory(openAdvisory === advisory.id ? null : advisory.id)
+                        }
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-[13.5px]" style={{ color: "var(--color-ink)" }}>
+                            {advisory.recommendation}
+                          </span>
+                          <span
+                            className="label shrink-0"
+                            style={{ color: CONFIDENCE_COLOR[advisory.confidence] }}
+                          >
+                            {advisory.confidence}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-[12px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+                          {advisory.reason}
+                        </p>
+                      </button>
+
+                      {openAdvisory === advisory.id ? (
+                        <AdvisoryDetail advisory={advisory} entries={state.entries} />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {/* ── Intelligence ──────────────────────────────────────── */}
+            <section className="mt-9">
+              <div className="flex items-baseline justify-between gap-4">
+                <div className="label-lit">Worth interrupting you for · {alerts.length}</div>
+                <button
+                  type="button"
+                  onClick={() => setShowDigest((v) => !v)}
+                  className="label transition-colors hover:text-[color:var(--color-signal)]"
+                >
+                  {showDigest ? "hide" : `digest · ${digest.length}`}
+                </button>
+              </div>
+
+              {alerts.length === 0 ? (
+                <p className="mt-3 text-[13px]" style={{ color: "var(--color-ink-soft)" }}>
+                  Nothing in the feed touches a current blocker or your stack.
+                  That is the normal answer.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-2.5">
+                  {alerts.map((row) => (
+                    <SignalRow key={row.signal.id} row={row} />
+                  ))}
+                </ul>
+              )}
+
+              {showDigest ? (
+                <ul className="mt-3 space-y-2.5">
+                  {digest.map((row) => (
+                    <SignalRow key={row.signal.id} row={row} />
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+
+            {/* ── Horizons ──────────────────────────────────────────── */}
+            {brief.horizons.length > 0 ? (
+              <section className="mt-9">
+                <div className="label-lit">Today, inside the longer arc</div>
+                <div className="mt-3 space-y-3">
+                  {brief.horizons.map((link) => (
+                    <div key={link.week} className="panel rounded-xl p-4">
+                      <div className="text-[13px]" style={{ color: "var(--color-ink)" }}>
+                        {link.today}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+                        <span className="label">this week · {link.week}</span>
+                        <span className="label">phase · {link.phase}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+                  {brief.waitingCount} case{brief.waitingCount === 1 ? " is" : "s are"} with
+                  someone else —{" "}
+                  <Link href="/waiting" className="underline decoration-dotted" style={{ color: "var(--color-signal)" }}>
+                    Waiting
+                  </Link>{" "}
+                  has the clocks.
+                </p>
+              </section>
+            ) : null}
+
+            <div className="mt-9 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void act({ action: "acknowledge" })}
+                className="chip px-4 py-2 label transition-colors hover:text-[color:var(--color-alive)] disabled:opacity-40"
+              >
+                seen it
+              </button>
+              <Link href="/products" className="chip px-4 py-2 label transition-colors hover:text-[color:var(--color-signal)]">
+                product state →
+              </Link>
+            </div>
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function Line({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-3">
+      <dt className="label w-[86px] shrink-0 whitespace-nowrap">{label}</dt>
+      <dd className="min-w-0 flex-1 text-[12px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * The full advisory. The last row is the one that matters: an assistant that
+ * cannot say what would change its mind is not advising, it is asserting.
+ */
+function AdvisoryDetail({ advisory, entries }: { advisory: Advisory; entries: Entry[] }) {
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  return (
+    <div className="mt-3 space-y-1.5 border-t pt-3" style={{ borderColor: "rgba(62,194,255,0.15)" }}>
+      <Line label="Benefit" value={advisory.expectedBenefit} />
+      <Line label="Trade-off" value={advisory.tradeOff} />
+      <Line label="Changes if" value={advisory.wouldChangeIf} />
+      <div className="flex gap-3">
+        <dt className="label w-[72px] shrink-0">Evidence</dt>
+        <dd className="min-w-0 flex-1">
+          {advisory.evidence.length === 0 ? (
+            <span className="text-[12px]" style={{ color: "var(--color-attend)" }}>
+              None recorded — treat this as a prompt, not a finding.
+            </span>
+          ) : (
+            <ul className="space-y-1">
+              {advisory.evidence.map((ref) => {
+                const entry = byId.get(ref);
+                return (
+                  <li key={ref} className="text-[12px]" style={{ color: "var(--color-ink-soft)" }}>
+                    <span className="label" style={{ color: "var(--color-signal)" }}>
+                      {entry?.kind ?? "missing"}
+                    </span>{" "}
+                    {entry?.text ?? ref}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </dd>
+      </div>
+      <p className="pt-1 label" style={{ color: "var(--color-ink-faint)" }}>
+        rule · {advisory.rule}
+      </p>
+    </div>
+  );
+}
+
+function SignalRow({ row }: { row: Classified }) {
+  return (
+    <li className="panel rounded-xl p-4">
+      <div className="flex items-start justify-between gap-4">
+        <span className="text-[13.5px]" style={{ color: "var(--color-ink)" }}>
+          {row.signal.headline}
+        </span>
+        <span
+          className="chip shrink-0 px-2 py-0.5 label"
+          style={{ color: VERDICT_COLOR[row.verdict], borderColor: VERDICT_COLOR[row.verdict] }}
+          title={VERDICT_MEANING[row.verdict]}
+        >
+          {VERDICT_LABEL[row.verdict]}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[12px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+        {row.because}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-x-4">
+        <span className="label">{row.signal.source}</span>
+        <span className="label">{row.signal.nature}</span>
+        {row.signal.demo ? (
+          <span className="label" style={{ color: "var(--color-violet)" }}>
+            example
+          </span>
+        ) : null}
+      </div>
+    </li>
+  );
+}
