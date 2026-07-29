@@ -125,8 +125,17 @@ async function synthesizeGemini(text: string, apiKey: string): Promise<SpeechAud
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
-        // Gemini takes direction as plain language rather than as tags.
-        contents: [{ parts: [{ text: `Say this slowly, low and deliberate: ${text}` }] }],
+        // No style direction, deliberately.
+        //
+        // Gemini takes direction as plain language, and every phrasing tried
+        // slowed it down — "slowly, low and deliberate" to 1.13 words/second,
+        // and even tone-only wording like "with calm authority" to 1.85. The
+        // chain then detunes the result, which costs a further twelve percent,
+        // so a direction that sounds right in isolation compounds into a drag.
+        // Undirected text measures 2.31 words/second and lands near 2.06 after
+        // processing, which is unhurried without dragging. The register is the
+        // chain's job; the model's job is clear diction at a normal pace.
+        contents: [{ parts: [{ text }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
