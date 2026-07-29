@@ -98,13 +98,19 @@ export async function POST(request: Request) {
   const needsLiveNews = requestsFreshNews(utterance, history);
   const needsSystemStatus = requestsSystemStatus(utterance);
   const requestedConnectorId = requestedConnection(utterance, history);
-  const newsQuery = [
-    ...history
-      .filter((turn) => turn.role === "operator")
-      .slice(-4)
-      .map((turn) => turn.text),
-    utterance,
-  ].join(" ");
+  const directNewsRequest =
+    /\b(news|headlines?|latest|newest|current events?|what(?:'s| is) happening)\b/i.test(
+      utterance,
+    );
+  const newsQuery = directNewsRequest
+    ? utterance
+    : [
+        ...history
+          .filter((turn) => turn.role === "operator")
+          .slice(-2)
+          .map((turn) => turn.text),
+        utterance,
+      ].join(" ");
 
   // ── WHO ────────────────────────────────────────────────────────────────
   const forced =

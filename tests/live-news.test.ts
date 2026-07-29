@@ -81,4 +81,48 @@ describe("live conversational news", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("does not let one feed take over a broad news briefing", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      const source = url.includes("techcrunch")
+        ? "techcrunch"
+        : url.includes("venturebeat")
+          ? "venturebeat"
+          : url.includes("arstechnica")
+            ? "ars"
+            : url.includes("github")
+              ? "github"
+              : "huggingface";
+      return new Response(
+        `<rss><channel>${[1, 2, 3]
+          .map(
+            (index) =>
+              `<item><title>${source} item ${index}</title><link>https://example.test/${source}/${index}</link><pubDate>Wed, 29 Jul 2026 10:00:00 GMT</pubDate></item>`,
+          )
+          .join("")}</channel></rss>`,
+        { status: 200 },
+      );
+    };
+    try {
+      const { fetchLiveNews } = await import("../lib/live-news");
+      const result = await fetchLiveNews(
+        "tell me the news",
+        Date.parse("2026-07-29T12:00:00Z"),
+      );
+      const counts = new Map<string, number>();
+      for (const item of result.headlines) {
+        counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+      }
+      assert.ok(result.sources.length >= 5);
+      assert.ok([...counts.values()].every((count) => count <= 2));
+      assert.equal(
+        result.sources.some((source) => source.name === "Hugging Face Daily Papers"),
+        false,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

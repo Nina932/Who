@@ -142,7 +142,6 @@ export function withoutPlaybackEcho(
 
   const maxPrefix = Math.min(heard.length, spoken.length);
   for (let length = maxPrefix; length >= 5; length -= 1) {
-    if (length < Math.ceil(spoken.length * 0.45)) continue;
     for (let start = 0; start + length <= spoken.length; start += 1) {
       let matches = 0;
       for (let index = 0; index < length; index += 1) {

@@ -36,6 +36,22 @@ describe("speech playback echo guard", () => {
     );
   });
 
+  it("drops a short delayed fragment from a long spoken news briefing", () => {
+    const newsPlayback =
+      "I checked Hugging Face Blog, Hugging Face Daily Papers, GitHub Changelog just now. This is verified, bounded coverage, not all news. Novel Claim or Déjà Vu? Rethinking contamination-free dynamic evaluation for multimodal automated fact-checking. Projection Pursuit CPCANet for domain generalization. CodeQL improves analysis accuracy and framework coverage.";
+    assert.equal(
+      withoutPlaybackEcho(
+        "I checked hugging face blog hugging face daily papers github changelog just now this is verified bounded coverage not all news novel claim or deja vu",
+        newsPlayback,
+      ),
+      "",
+    );
+    assert.equal(
+      withoutPlaybackEcho("I checked hugging face blog", newsPlayback),
+      "",
+    );
+  });
+
   it("does not suppress unrelated operator speech", () => {
     assert.equal(
       withoutPlaybackEcho("tell me about Facebook and yourself", playback),

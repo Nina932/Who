@@ -14,6 +14,21 @@ export interface LiveNewsContext {
 const DEFAULT_NEWS_SOURCES = [
   { name: "Hugging Face Blog", url: "https://huggingface.co/blog/feed.xml", kind: "rss" },
   {
+    name: "TechCrunch AI",
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/",
+    kind: "rss",
+  },
+  {
+    name: "VentureBeat AI",
+    url: "https://venturebeat.com/category/ai/feed/",
+    kind: "rss",
+  },
+  {
+    name: "Ars Technica",
+    url: "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    kind: "rss",
+  },
+  {
     name: "Hugging Face Daily Papers",
     url: "https://huggingface.co/api/daily_papers",
     kind: "daily-papers",
@@ -93,8 +108,17 @@ export async function fetchLiveNews(
   query: string,
   now = Date.now(),
 ): Promise<LiveNewsContext> {
-  const sources = configuredSources();
   const terms = queryTerms(query);
+  const wantsResearch =
+    /\b(papers?|research|benchmark|evaluation|study|studies|academic)\b/i.test(
+      query,
+    );
+  // Daily Papers is valuable when explicitly requested, but it is not a
+  // general-news desk. Including it in every broad briefing is what made
+  // Morpheus answer "news" with a wall of paper titles.
+  const sources = configuredSources().filter(
+    (source) => source.kind !== "daily-papers" || wantsResearch,
+  );
   const outcomes = await Promise.allSettled(
     sources.map(async (source) => {
       const response = await fetch(source.url, {
@@ -157,7 +181,7 @@ export async function fetchLiveNews(
     candidates.push(...outcome.value.items);
   });
 
-  const ranked = candidates
+  const rankedCandidates = candidates
     .filter(
       (item) =>
         item.at <= now + 86_400_000 &&
@@ -178,9 +202,25 @@ export async function fetchLiveNews(
       return { item, score };
     })
     .filter((row) => terms.length === 0 || row.score > 0)
-    .sort((a, b) => b.score - a.score || b.item.at - a.item.at)
-    .slice(0, 8)
-    .map((row) => row.item);
+    .sort((a, b) => b.score - a.score || b.item.at - a.item.at);
+
+  // Broad news needs editorial breadth. Cap any one feed at two results and
+  // deduplicate syndicated links/titles; specific searches may go deeper into
+  // the source that actually matched.
+  const perSource = new Map<string, number>();
+  const seen = new Set<string>();
+  const ranked: LiveHeadline[] = [];
+  const sourceLimit = terms.length === 0 ? 2 : 4;
+  for (const row of rankedCandidates) {
+    const key = (row.item.link || row.item.title).toLowerCase();
+    if (seen.has(key)) continue;
+    const count = perSource.get(row.item.source) ?? 0;
+    if (count >= sourceLimit) continue;
+    seen.add(key);
+    perSource.set(row.item.source, count + 1);
+    ranked.push(row.item);
+    if (ranked.length === 8) break;
+  }
 
   return { fetchedAt: now, headlines: ranked, sources: sourceStatus };
 }
