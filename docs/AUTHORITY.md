@@ -172,14 +172,132 @@ The browser gives pitch, rate and voice choice. Real metallic timbre needs ring
 modulation, and `SpeechSynthesis` output cannot be routed into a Web Audio
 graph. `deliveryFor` is the seam a licensed TTS backend would honour.
 
-## 9. Not built
+## 9. Voice
 
-- **Nothing redeems a grant from the UI yet.** `withAuthority` accepts a
-  `grantId`, the API returns one, and the Loops Engine path uses the
-  request-and-redeem flow — but there is no "approve this specific pending
-  action" button wired to a waiting tool call.
+Every capability is reachable by voice — asking for work, reviewing the plan,
+approving, rejecting, cancelling, checking the result. Voice is another
+interface to the same engine, never a way around it:
+
+```
+text  ─┐
+voice ─┼─→ intent → pending action → authority decision → grant → tool
+ui    ─┘
+```
+
+### A generic "yes" never approves anything
+
+The word can come from a television, a recording, another conversation, or
+Morpheus's own speaker. So approval requires an action-specific phrase carrying
+a reference that was spoken aloud a moment earlier:
+
+> "This sends an email to David at david@example.com, subject 'G8 deployment
+> update'. It reaches a person and cannot be recalled. Say: *approve send
+> 1001*."
+
+Never "do you approve?" — a prompt that does not say what will happen is a
+prompt that trains people to say yes. The reference must match as its own
+token, so "742" does not approve 7421.
+
+### Morpheus cannot approve itself
+
+Its own audio is both the closest to the microphone and the most likely to
+contain the exact phrase, having just read it out. So:
+
+| | |
+| --- | --- |
+| Speaker active | approval recognition off |
+| Self-playback | never valid |
+| Uploaded audio | never valid |
+| Remote call audio | never valid |
+| No authenticated session | rejected |
+| Floor is not `awaiting-approval` | heard as dictation |
+
+That last row is what stops a dictated email containing the phrase from
+approving itself.
+
+### Not every level-4 action may be finished by voice
+
+| Action | Voice |
+| --- | --- |
+| Send email, invite attendees, post to a channel | Phrase |
+| Publish, send invoice, merge protected branch | Phrase **and** on-screen preview |
+| Production deploy, purchase | Phrase initiates; **security key** authorises |
+| Move money, rotate credentials, migrate a database, delete files | **Never** |
+
+Unlisted level-4 capabilities default to `never`. Fail closed: a capability
+added later without a considered entry must not become voice-approvable by
+omission, which is how a default quietly becomes a policy.
+
+A voiceprint is not an authentication factor. Voices can be recorded and
+synthesised.
+
+### Cancelling is deliberately easier than approving
+
+Approval needs the exact phrase and the reference. `stop`, `cancel`, `never
+mind`, `forget it` all match loosely and need no reference. The asymmetry is
+the point: making it hard to stop something is a far worse failure than making
+it easy, and an operator scrambling to cancel should not have to remember a
+number.
+
+### Receipts, not "Done"
+
+> "The draft was saved in Gmail. Nothing was sent."
+> "The deployment request was rejected because the production approval expired."
+
+A completion with no returned evidence is reported as *unverified* rather than
+as success.
+
+## 10. The binding — the correction that mattered
+
+A grant bound only to a capability authorises a **category**. Approve "send
+this email to David" and, until expiry, the same grant satisfies any
+`mail.send` — different recipient, different body. The operator approved a
+sentence they heard; the system authorised a permission.
+
+So arguments are frozen *before* approval and hashed, and the hash is bound
+into the grant:
+
+```ts
+interface Grant {
+  capabilityId: string;
+  pendingActionId?: string;    // this action, not this kind of action
+  argumentsHash?: string;      // SHA-256 of the canonical arguments
+  operatorSessionId?: string;  // an approval is not transferable
+}
+```
+
+All three are checked at redemption and all three must match. Four properties,
+each tested:
+
+- **Changing anything material invalidates the approval.** Swap the recipient
+  and the hash changes; no existing grant satisfies it.
+- **An omitted binding is a mismatch, not a pass.** "No hash offered" would
+  otherwise be the easiest way around the entire mechanism.
+- **A mismatch does not spend the use.** One wrong presentation must not burn a
+  legitimate approval.
+- **Amending supersedes rather than edits.** "Change the recipient to Maria"
+  cancels the original and creates a new action with a new reference and a new
+  hash. The previous approval does not still apply — it becomes unredeemable.
+
+Canonical serialisation sorts keys and drops `undefined`, so a JSON round-trip
+cannot invalidate an approval. That matters: spurious invalidation trains
+people to re-approve reflexively, which is worse than not asking.
+
+## 11. Not built
+
+- **No tool consumes a pending action's grant yet.** The lifecycle is complete
+  — propose, read back, approve, bind, redeem — and `withAuthority` accepts the
+  `grantId`, but no tool call currently waits on one. The Loops Engine uses the
+  request-and-redeem path, which is the unattended case.
 - **Scopes are names, not enforcement.** A redeemed grant hands its scope list
-  to the action; the connectors do not yet narrow their OAuth token to it.
+  to the action; the connectors do not yet verify that the redeemed grant
+  authorises the exact operation they are about to perform.
+- **Step-up is a boolean.** `steppedUp` is trusted from the caller. WebAuthn is
+  the seam it is shaped for; nothing implements it.
+- **`operatorSessionId` is supplied, not proven.** There is no session
+  authority issuing or validating it.
+- **No wake-word or push-to-talk gate.** The floor model exists in
+  `lib/voice-authority.ts`; the microphone path does not yet drive it.
 - **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
   capabilities with no sandbox behind them.
 - **No spend metering.** The limit is checked per action; nothing tracks

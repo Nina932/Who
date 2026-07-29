@@ -234,11 +234,11 @@ describe("the broker", () => {
     const issued = broker.request("mail.draft", { now: NOW });
     assert.ok(issued.ok);
 
-    const first = broker.redeem(issued.grant.id, NOW + 100);
+    const first = broker.redeem(issued.grant.id, {}, NOW + 100);
     assert.ok(first.ok);
     assert.deepEqual(first.scopes, ["gmail.compose"]);
 
-    const second = broker.redeem(issued.grant.id, NOW + 200);
+    const second = broker.redeem(issued.grant.id, {}, NOW + 200);
     assert.ok(!second.ok);
     assert.equal(second.refusal, "spent");
   });
@@ -247,14 +247,14 @@ describe("the broker", () => {
     const broker = createBroker(policy({ ceiling: 2 }));
     const issued = broker.request("mail.draft", { now: NOW, ttlMs: 1000 });
     assert.ok(issued.ok);
-    const result = broker.redeem(issued.grant.id, NOW + 5000);
+    const result = broker.redeem(issued.grant.id, {}, NOW + 5000);
     assert.ok(!result.ok);
     assert.equal(result.refusal, "expired");
   });
 
   it("refuses a grant id that was never issued", () => {
     const broker = createBroker(policy());
-    const result = broker.redeem("g_forged", NOW);
+    const result = broker.redeem("g_forged", {}, NOW);
     assert.ok(!result.ok);
     assert.equal(result.refusal, "unknown-grant");
   });
@@ -262,7 +262,7 @@ describe("the broker", () => {
   it("audits the refusals, which are the rows that matter", () => {
     const broker = createBroker(policy({ ceiling: 2 }));
     broker.request("mail.send", { now: NOW });
-    broker.redeem("g_forged", NOW + 1);
+    broker.redeem("g_forged", {}, NOW + 1);
 
     const refusals = broker.audit().filter((e) => e.outcome === "refused");
     assert.equal(refusals.length, 2);
@@ -273,7 +273,7 @@ describe("the broker", () => {
     const broker = createBroker(policy({ ceiling: 2 }));
     const issued = broker.request("mail.draft", { now: NOW });
     assert.ok(issued.ok);
-    broker.redeem(issued.grant.id, NOW + 10);
+    broker.redeem(issued.grant.id, {}, NOW + 10);
 
     const outcomes = broker.audit().map((e) => e.outcome);
     assert.ok(outcomes.includes("issued"));

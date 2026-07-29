@@ -10,14 +10,21 @@ import {
   type Policy,
 } from "@/lib/authority";
 import {
+  allPending,
   appendAudit,
   auditLog,
   currentPolicy,
+  grantFor,
   liveBroker,
+  openPending,
+  patchPending,
+  propose,
   resetBroker,
   savePolicy,
 } from "@/lib/authority-runtime";
 import { guardMutation } from "@/lib/guard";
+import { amend, challengePhrase, readBack, statusOf } from "@/lib/pending";
+import { explain, judge, voiceApprovalFor, type VoiceContext } from "@/lib/voice-authority";
 
 /**
  * The authority surface.
@@ -53,6 +60,12 @@ export async function GET() {
     })),
     unattended: unattended(current).map((c) => c.id),
     audit,
+    pending: (await allPending()).map((action) => ({
+      ...action,
+      status: statusOf(action, Date.now()),
+      challenge: challengePhrase(action),
+      voiceApproval: voiceApprovalFor(CAPABILITIES.find((c) => c.id === action.capabilityId)!),
+    })),
   });
 }
 
@@ -63,6 +76,17 @@ interface Body {
   list?: unknown;
   spendLimitMinor?: unknown;
   approvedFor?: unknown;
+  actionId?: unknown;
+  actionSummary?: unknown;
+  args?: unknown;
+  transcript?: unknown;
+  sessionId?: unknown;
+  channel?: unknown;
+  previewed?: unknown;
+  steppedUp?: unknown;
+  speaking?: unknown;
+  source?: unknown;
+  floor?: unknown;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -199,6 +223,142 @@ export async function POST(request: Request) {
               }
             : { granted: false, refusal: result.refusal, reason: result.decision.reason },
         );
+      }
+
+      // ── Pending actions ────────────────────────────────────────────
+      case "propose": {
+        const capabilityId = str(body.capabilityId);
+        const actionSummary = str(body.actionSummary);
+        if (!capabilityId || !actionSummary) {
+          return NextResponse.json(
+            { error: "capabilityId and actionSummary required." },
+            { status: 400 },
+          );
+        }
+        const result = await propose({
+          capabilityId,
+          requestedBy: (str(body.source) as "voice" | "text" | "ui") ?? "ui",
+          actionSummary,
+          args: body.args ?? null,
+        });
+        if (!result.ok) return NextResponse.json({ error: result.reason }, { status: 400 });
+
+        return NextResponse.json({
+          action: result.action,
+          challenge: challengePhrase(result.action),
+          // What Morpheus says: the consequence, then the exact phrase. Never
+          // "do you approve?" — a prompt that does not say what will happen is
+          // a prompt that trains people to say yes.
+          readBack: readBack(result.action, "voice"),
+        });
+      }
+
+      case "approve-voice": {
+        const actionId = str(body.actionId);
+        const transcript = str(body.transcript);
+        if (!actionId || !transcript) {
+          return NextResponse.json({ error: "actionId and transcript required." }, { status: 400 });
+        }
+
+        const action = (await openPending()).find((a) => a.id === actionId);
+        if (!action) {
+          return NextResponse.json(
+            { error: "No open action with that id. It may have expired or been cancelled." },
+            { status: 404 },
+          );
+        }
+
+        const context: VoiceContext = {
+          floor: (str(body.floor) as VoiceContext["floor"]) ?? "awaiting-approval",
+          source: (str(body.source) as VoiceContext["source"]) ?? "unknown",
+          speaking: body.speaking === true,
+          sessionId: str(body.sessionId) ?? null,
+          previewed: body.previewed === true,
+          steppedUp: body.steppedUp === true,
+        };
+
+        const verdict = judge(action, transcript, context, Date.now());
+        if (!verdict.ok) {
+          // A refused approval is audited, because a refusal is the only
+          // evidence you get that something tried.
+          await appendAudit([
+            {
+              at: Date.now(),
+              capabilityId: action.capabilityId,
+              outcome: "refused",
+              refusal: "needs-approval",
+              detail: `Voice approval refused (${verdict.code}): ${verdict.reason}`,
+            },
+          ]);
+          return NextResponse.json({ approved: false, code: verdict.code, reason: verdict.reason });
+        }
+
+        const granted = await grantFor(action, context.sessionId as string, "voice");
+        if (!granted.ok) return NextResponse.json({ approved: false, reason: granted.reason });
+        return NextResponse.json({ approved: true, grantId: granted.grantId });
+      }
+
+      case "approve-action": {
+        // The UI path. Same engine, same binding — a click is not a shortcut.
+        const actionId = str(body.actionId);
+        const sessionId = str(body.sessionId) ?? "ui-session";
+        if (!actionId) {
+          return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        }
+        const action = (await openPending()).find((a) => a.id === actionId);
+        if (!action) return NextResponse.json({ error: "No open action." }, { status: 404 });
+
+        const channel = str(body.channel) === "security-key" ? "security-key" : "ui";
+        const granted = await grantFor(action, sessionId, channel);
+        if (!granted.ok) return NextResponse.json({ approved: false, reason: granted.reason });
+        return NextResponse.json({ approved: true, grantId: granted.grantId });
+      }
+
+      case "reject-action":
+      case "cancel-action": {
+        const actionId = str(body.actionId);
+        if (!actionId) return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        const status = str(body.action) === "reject-action" ? "rejected" : "cancelled";
+        const updated = await patchPending(actionId, { status });
+        return NextResponse.json({ action: updated });
+      }
+
+      case "amend-action": {
+        // Amending supersedes rather than edits: the original is cancelled and
+        // a new action with a new hash replaces it, so any grant against the
+        // old arguments becomes unredeemable.
+        const actionId = str(body.actionId);
+        if (!actionId) return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        const action = (await allPending()).find((a) => a.id === actionId);
+        if (!action) return NextResponse.json({ error: "No such action." }, { status: 404 });
+
+        const { cancelled, replacement } = await amend(
+          action,
+          body.args ?? null,
+          Date.now(),
+          str(body.actionSummary),
+        );
+        await patchPending(actionId, { status: cancelled.status });
+        const created = await propose({
+          capabilityId: replacement.capabilityId,
+          requestedBy: replacement.requestedBy,
+          actionSummary: replacement.actionSummary,
+          args: replacement.immutableArguments,
+        });
+        if (!created.ok) return NextResponse.json({ error: created.reason }, { status: 400 });
+        return NextResponse.json({
+          action: created.action,
+          challenge: challengePhrase(created.action),
+          note: "The previous approval no longer applies.",
+        });
+      }
+
+      case "explain-action": {
+        const actionId = str(body.actionId);
+        if (!actionId) return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        const action = (await allPending()).find((a) => a.id === actionId);
+        if (!action) return NextResponse.json({ error: "No such action." }, { status: 404 });
+        return NextResponse.json({ explanation: explain(action) });
       }
 
       default:

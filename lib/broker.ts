@@ -40,6 +40,22 @@ export interface Grant {
   approvedBy: "policy" | "operator";
   /** What the operator was told when they approved it, kept verbatim. */
   approvedFor?: string;
+
+  // ── Binding ──────────────────────────────────────────────────────────
+  //
+  // Without these a grant authorises a *category*. Approve one email and,
+  // until expiry, the same grant satisfies any `mail.send` — different
+  // recipient, different body. The operator approved a sentence they heard;
+  // the system would have authorised a permission.
+  //
+  // All three are checked at redemption, and all three must match.
+
+  /** The one action this authorises. */
+  pendingActionId?: string;
+  /** SHA-256 of the frozen arguments. Any material change invalidates it. */
+  argumentsHash?: string;
+  /** The session that approved it. An approval is not transferable. */
+  operatorSessionId?: string;
 }
 
 /** Short enough that a leaked grant is worth almost nothing. */
@@ -50,7 +66,9 @@ export type Refusal =
   | "needs-approval"
   | "expired"
   | "spent"
-  | "unknown-grant";
+  | "unknown-grant"
+  /** Right capability, wrong action, wrong arguments, or wrong session. */
+  | "binding-mismatch";
 
 export interface AuditEntry {
   at: number;
@@ -62,20 +80,35 @@ export interface AuditEntry {
   detail: string;
 }
 
+/** What a redemption must present to prove it is the approved action. */
+export interface Binding {
+  pendingActionId?: string;
+  argumentsHash?: string;
+  operatorSessionId?: string;
+}
+
 export interface Broker {
   request(
     capabilityId: string,
-    options?: { amountMinor?: number; uses?: number; ttlMs?: number; now?: number },
+    options?: {
+      amountMinor?: number;
+      uses?: number;
+      ttlMs?: number;
+      now?: number;
+    } & Binding,
   ): { ok: true; grant: Grant } | { ok: false; refusal: Refusal; decision: Decision };
   approve(
     capabilityId: string,
     approvedFor: string,
-    options?: { uses?: number; ttlMs?: number; now?: number },
+    options?: { uses?: number; ttlMs?: number; now?: number } & Binding,
   ): { ok: true; grant: Grant } | { ok: false; refusal: Refusal; decision: Decision };
   redeem(
     grantId: string,
+    presented?: Binding,
     now?: number,
-  ): { ok: true; scopes: string[]; capabilityId: string } | { ok: false; refusal: Refusal };
+  ):
+    | { ok: true; scopes: string[]; capabilityId: string }
+    | { ok: false; refusal: Refusal; detail?: string };
   audit(): AuditEntry[];
   outstanding(now?: number): Grant[];
 }
@@ -101,6 +134,7 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
     uses: number,
     ttlMs: number,
     now: number,
+    binding: Binding = {},
   ): Grant => {
     counter += 1;
     const grant: Grant = {
@@ -112,6 +146,7 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
       usesLeft: uses,
       approvedBy,
       approvedFor,
+      ...binding,
     };
     grants.set(grant.id, grant);
     record({
@@ -168,6 +203,11 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
           options.uses ?? 1,
           options.ttlMs ?? DEFAULT_TTL_MS,
           now,
+          {
+            pendingActionId: options.pendingActionId,
+            argumentsHash: options.argumentsHash,
+            operatorSessionId: options.operatorSessionId,
+          },
         ),
       };
     },
@@ -205,6 +245,11 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
           options.uses ?? 1,
           options.ttlMs ?? DEFAULT_TTL_MS,
           now,
+          {
+            pendingActionId: options.pendingActionId,
+            argumentsHash: options.argumentsHash,
+            operatorSessionId: options.operatorSessionId,
+          },
         ),
       };
     },
@@ -216,7 +261,7 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
      * clock is checked. Returns scopes — never a token; resolving those into
      * a credential is the connector's job and happens after this.
      */
-    redeem(grantId, now = Date.now()) {
+    redeem(grantId, presented = {}, now = Date.now()) {
       const grant = grants.get(grantId);
 
       if (!grant) {
@@ -253,6 +298,48 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
           detail: "Already used. A grant is not a subscription.",
         });
         return { ok: false, refusal: "spent" };
+      }
+
+      // ── Binding ──────────────────────────────────────────────────────
+      //
+      // Checked before the use is spent, so a mismatched attempt does not
+      // consume the operator's approval. Otherwise an attacker — or a bug —
+      // could burn a legitimate grant by presenting the wrong arguments once.
+      //
+      // A bound field must be *presented and equal*. Omitting it is a
+      // mismatch, not a pass: "no hash offered" would otherwise be the easiest
+      // way around the whole mechanism.
+      const bindings: Array<[keyof Binding, string]> = [
+        ["pendingActionId", "a different action"],
+        ["argumentsHash", "different arguments"],
+        ["operatorSessionId", "a different session"],
+      ];
+
+      for (const [field, wrongness] of bindings) {
+        const bound = grant[field];
+        if (bound === undefined) continue;
+        if (presented[field] !== bound) {
+          record({
+            at: now,
+            capabilityId: grant.capabilityId,
+            grantId,
+            outcome: "refused",
+            refusal: "binding-mismatch",
+            detail: `Approval was for ${wrongness}. ${
+              field === "argumentsHash"
+                ? "The action changed after it was approved, so the approval no longer applies."
+                : "An approval is not transferable."
+            }`,
+          });
+          return {
+            ok: false,
+            refusal: "binding-mismatch",
+            detail:
+              field === "argumentsHash"
+                ? "The action changed after you approved it. Approve the amended version."
+                : `That approval was for ${wrongness}.`,
+          };
+        }
       }
 
       grant.usesLeft -= 1;

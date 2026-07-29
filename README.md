@@ -37,8 +37,17 @@ raised away** — the ceiling saturates at 3, and sending, publishing, deploying
 deleting and spending always ask, at every setting. A boundary that can be
 switched off is a default.
 
-The model never holds a credential. It holds a *grant*: an opaque id naming one
-capability, valid 90 seconds and one use, redeemed server-side. Every issue,
+Every capability is reachable by **voice** — and voice is another interface to
+the same engine, never a way around it. A generic "yes" approves nothing:
+approval needs an action-specific phrase carrying a spoken reference. Morpheus
+is deaf to approval while its own speaker is active, uploaded and remote audio
+can never approve, and moving money, rotating credentials or deleting data
+cannot be approved by voice at all — a voice can be recorded or synthesised.
+
+The model never holds a credential. It holds a *grant* bound to **one action**:
+its id, a SHA-256 of its frozen arguments, and the approving session. Change
+the recipient after approval and the hash changes, so the approval stops
+applying. Valid 90 seconds, one use, redeemed server-side. Every issue,
 redemption and refusal is audited. The Loops Engine goes through it — a loop
 running past its human gate is still not permission to act. Full write-up in
 **[`docs/AUTHORITY.md`](docs/AUTHORITY.md)**.
@@ -251,7 +260,9 @@ components/
   social/               Platform cards, goal loop pipelines
 lib/
   authority.ts          Four levels, the capability registry, the policy engine
-  broker.ts             Short-lived grants, single use, audited
+  broker.ts             Grants bound to one action: id, argument hash, session
+  pending.ts            Frozen arguments, the challenge phrase, amendment
+  voice-authority.ts    The floor model, audio provenance, step-up rules
   authority-runtime.ts  The live broker and withAuthority — the only path out
   intent.ts             Answer modes: direct / business / code / action
   voice.ts              The Morpheus register, and delivery under risk
@@ -295,7 +306,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 346 tests + build, no API keys needed
+npm run verify        # typecheck + 384 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```
