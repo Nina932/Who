@@ -90,13 +90,34 @@ export type Domain =
   | "research"
   | "personal";
 
+/**
+ * What can be done about it afterwards.
+ *
+ * `reversible` and `compensatable` are not the same thing, and conflating
+ * them overstates the safety of anything that leaves the process. Deleting a
+ * Slack message does not undo the fact that it was delivered, read, or
+ * screenshotted — it *compensates*. A branch, by contrast, genuinely reverts.
+ */
+export type Effect =
+  /** Undone completely, by us, with nothing left behind. */
+  | "reversible"
+  /** A side effect escaped; the best available remedy is a follow-up. */
+  | "compensatable"
+  /** Nothing can be done. */
+  | "irreversible";
+
 export interface Capability {
   id: string;
   label: string;
   domain: Domain;
   level: Level;
-  /** Can the effect be undone without asking anyone? */
+  /**
+   * Kept as the coarse gate the level rules use. `effect` is the accurate
+   * property; this is true for anything not `irreversible`.
+   */
   reversible: boolean;
+  /** The precise claim. Optional so the default stays conservative. */
+  effect?: Effect;
   /** Permissions the broker will attach to a grant. Never credentials. */
   scopes: string[];
   /** What is actually at stake. Shown verbatim at the approval prompt. */
@@ -185,8 +206,12 @@ export const CAPABILITIES: Capability[] = [
     reversible: true,
     scopes: ["chat:write"],
     // Distinct from `chat.post`, which is seen by clients and colleagues.
-    // This is a message to your own channel — noise if wrong, not damage.
-    consequence: "A message in your own notification channel. Deleting it costs a click.",
+    // Compensatable rather than reversible: deleting the message does not undo
+    // its delivery, and deletion needs a permission and a retained message id
+    // that this does not currently have.
+    effect: "compensatable",
+    consequence:
+      "A message in your own notification channel. It is delivered; deleting it afterwards does not un-deliver it.",
   },
   {
     id: "social.publish",

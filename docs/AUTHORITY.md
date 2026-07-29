@@ -364,6 +364,21 @@ execute 1003                → "1003 is cancelled, not approved."
 
 Two failures a sequential test cannot see, both found by review and both real.
 
+### What "exactly once" does and does not mean
+
+It does **not** mean exactly-once external execution. For an arbitrary
+provider that is generally not achievable without provider cooperation, and
+claiming it would be the most dangerous sentence in this document.
+
+What is achieved is **effectively-once within one process**: an atomic claim,
+a stable idempotency key, and — the part that matters most — a refusal to
+treat an ambiguous outcome as a failure.
+
+What is **not** proven: multi-instance claiming (the concurrency test runs two
+calls in one Node process; the Redis compare-and-set is implemented, not
+demonstrated), crash recovery at each point in the sequence, and
+provider-side deduplication.
+
 ### The audit log repeated itself
 
 `flush()` called `audit()`, which returns the whole in-memory log — so
@@ -382,11 +397,30 @@ after:   events: 3 | persisted rows: 3
 
 `drainAudit()` returns only what has not been handed out and advances a
 cursor; `audit()` still returns everything, because reading a log for display
-must not consume it. Trimming moves the cursor with it, so a busy broker
-cannot silently drop un-persisted rows off the front.
+must not consume it.
 
 An audit log that repeats itself is worse than none — it looks like more
 happened than did.
+
+### …and then the fix lost entries instead
+
+The first attempt trimmed the log past 2000 entries and moved the cursor down
+with it, which silently destroyed un-persisted rows. **2100 events in, 2000
+out, 100 gone.** The comment claiming that could not happen was wrong, and the
+test — `assert.ok(drained.length <= 2000)` — was written to accommodate the
+bug rather than catch it.
+
+Now only the *already-drained* prefix is reclaimed. If nothing has been
+drained, nothing is discarded, and the log grows. Unbounded memory is a worse
+*looking* failure than silent evidence loss and a far better one: it is
+visible, and it does not quietly rewrite history.
+
+Entries carry a monotonic `seq`, because a missing row is invisible in a list
+of timestamps and obvious in a sequence. A backlog past ten thousand records
+itself as an event — a stopped persister should not read as a quiet period.
+
+The test now records **10,000 events without draining and requires all
+10,000** back, with a gap-free sequence.
 
 ### Execution was a race with a comment on it
 
@@ -400,15 +434,29 @@ compare-and-set. Exactly one caller can observe `approved` and write
 `executing`.
 
 Behind it is an **idempotency ledger** keyed on `capabilityId:actionId` — the
-same key a retry would carry and a different action never collides with. It
-catches the case the status cannot: a crash between claiming and completing.
+same key a retry would carry and a different action never collides with.
 
-The subtlety worth stating: a claim is **released** when the call reached
-nothing. A refused connector call must not leave a ledger entry, or a
-legitimate retry after fixing the connector is turned away as a duplicate.
+The ledger records that execution was *claimed*, not that it *happened*. Those
+are different facts and the difference is where doubles come from.
+
+### Three outcomes, not two
+
+`failed` used to mean "nothing happened", and that is unsafe. A request can
+reach a provider, be performed, and have its response lost. Retrying on that
+basis sends the email twice.
+
+| | |
+| --- | --- |
+| `completed` | The provider answered. It happened. |
+| `failed` | The request demonstrably never left — validation, policy refusal, no connector. Safe to retry, ledger released. |
+| `outcome-uncertain` | The request left and no answer came back. **Terminal.** Nothing retries automatically; the ledger entry stays. |
+
+`googleFetch` distinguishes them: a 4xx is a decision the provider made, a 5xx
+or a thrown network error is genuinely unknown. That travels up through
+`ToolResult.uncertain` to the execution status.
 
 Tested by firing two `executeApproved` calls with `Promise.all` and asserting
-exactly one claims it.
+exactly one claims it, and by asserting `outcome-uncertain` is terminal.
 
 ## 13. One way out
 
@@ -423,9 +471,40 @@ notifications, so a message left the process without passing the boundary. A
 notification is small, but "small" is not a category the boundary knows about.
 
 It now goes through `withAuthority` under a new `notify.operator` capability —
-level 3, distinct from `chat.post` because a message to your own channel is
-noise if wrong, not damage. Under the default ceiling of 2 it does not fire,
-which is correct: Morpheus prepares rather than acts until told otherwise.
+level 3, distinct from `chat.post`. Under the default ceiling of 2 it does not
+fire, which is correct: Morpheus prepares rather than acts until told
+otherwise.
+
+### Reversible, compensatable, irreversible
+
+Calling that notification "reversible" was wrong. Deleting a Slack message
+does not undo its delivery — it needs a permission and a retained message id
+this does not have, and somebody may already have read it.
+
+Capabilities now carry an `effect`:
+
+| | |
+| --- | --- |
+| `reversible` | Undone completely, by us, nothing left behind |
+| `compensatable` | A side effect escaped; the best remedy is a follow-up |
+| `irreversible` | Nothing can be done |
+
+`notify.operator` is compensatable. A test asserts that a compensatable
+capability's consequence does not read as undoable.
+
+### The list is derived, and the connector enforces at runtime
+
+The hard-coded `MUTATIONS` array was a list somebody would forget to add to —
+`export async function sendInvoice` would ship and the test would stay green.
+It is now read out of the connector source: any exported async function
+issuing a non-GET request. The OAuth lifecycle is excluded **by name**, so
+that exclusion is a decision to disagree with rather than a gap.
+
+Static analysis still cannot see a renamed import, a namespace import, a
+dynamic import or a re-export. So `googleFetch` refuses any mutating request
+that arrives without a declared capability scope. That catches a *call*, not
+an import — the boundary holds even when reached by a route the test cannot
+model.
 
 A test rather than a convention, because a convention is a thing people
 remember until the afternoon they are in a hurry.
@@ -448,6 +527,12 @@ damage.
 This is not production-safe, and the gaps are architectural rather than
 cosmetic. In the order they should be closed:
 
+**These claims would be too strong, and are not made:** that audit rows can
+never be lost under any condition (the durable append is a JSON document, not
+a database with a uniqueness constraint); that execution is exactly-once
+against a provider; that Redis compare-and-set is *proven* to serialise two
+instances; or that a failure means nothing happened.
+
 1. **A session proves continuity, not identity.** A random server-issued
    cookie proves "same browser", not "this is the authorised operator". There
    is no `operatorId`, no workspace, no authentication method or strength on
@@ -467,27 +552,39 @@ cosmetic. In the order they should be closed:
    does not. Read operations have capabilities registered but are not gated
    the way mutations are, and reads can expose mail, customer records, source
    and logs.
-5. **State is per-process.** Sessions, pending actions and challenges live in
+5. **Distributed claiming is implemented, not proven.** The concurrency test
+   runs two calls in one Node process, which exercises the local
+   serialisation path only. Proving it needs two instances against a shared
+   Redis, plus killing the winner at each point: after claim before ledger,
+   after ledger before request, after request before response, after provider
+   success before local completion.
+6. **No provider idempotency or reconciliation.** The key exists and is
+   stable; nothing passes it to a provider that supports one, and nothing
+   searches Gmail or Calendar for an action marker before retrying. An
+   `outcome-uncertain` action currently waits for a person.
+7. **State is per-process.** Sessions, pending actions and challenges live in
    memory. Grants dying on restart is intended; being signed out and losing
    pending approvals because a request reached another instance is not.
    Sessions, pending actions, approval evidence, audit records and the
    idempotency ledger belong in a transactional store; one-use grants and
    challenges belong in Redis with expiry.
-6. **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
+8. **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
    capabilities with nothing behind them — no isolated filesystem, no limits,
    no timeout, no network policy, no non-root user. Until that exists they
    should be denied rather than treated as reversible execution.
-7. **No cumulative spend control.** The limit is per action. Nothing tracks
+9. **No cumulative spend control.** The limit is per action. Nothing tracks
    spend per day, per vendor, per product, or total pending.
-8. **Morpheus scopes are not OAuth scopes.** The redeemed list is an
+10. **Morpheus scopes are not OAuth scopes.** The redeemed list is an
    application-level authority scope; the underlying token may still be
    broader. That is only acceptable while the connector checks the grant
    before every operation and no other path exists — which the seam test now
    holds. Separate connections per permission level would be the outer
    control.
 
-The next milestone should not add capabilities. It should prove one complete
-path under realistic conditions — authenticated operator speaks, action
+The execution truth model comes before the voice milestone: lossless durable
+audit, atomic durable lease, attempt records separate from completion
+evidence, provider idempotency keys, reconciliation, multi-instance proof,
+crash-point recovery. Only then one complete path under realistic conditions — authenticated operator speaks, action
 prepared, arguments frozen, consequence read back, action-specific approval,
 step-up where required, atomic claim, one-use redemption, a real connected
 service, verified result, one accurate audit trail, spoken receipt — and

@@ -71,6 +71,14 @@ export type Refusal =
   | "binding-mismatch";
 
 export interface AuditEntry {
+  /**
+   * Monotonic and gap-free per broker.
+   *
+   * Without it there is no way to tell a quiet period from a lost one — a
+   * missing row is invisible in a list of timestamps, and obvious in a
+   * sequence.
+   */
+  seq: number;
   at: number;
   capabilityId: string;
   grantId?: string;
@@ -111,6 +119,8 @@ export interface Broker {
     | { ok: false; refusal: Refusal; detail?: string };
   /** The whole in-memory log. Reading it does not mark anything persisted. */
   audit(): AuditEntry[];
+  /** True when unpersisted entries have built up past the alarm threshold. */
+  auditBacklog(): number;
   /**
    * Entries not yet handed out, removed as they are returned.
    *
@@ -125,21 +135,59 @@ export interface Broker {
 
 let counter = 0;
 
+/** How much drained history to keep around for display. */
+const DISPLAY_CACHE = 2000;
+
+/** A backlog past this means flushing has stopped, which is itself an event. */
+const UNDRAINED_ALARM = 10_000;
+
 export function createBroker(policy: Policy, seed = "g"): Broker {
   const grants = new Map<string, Grant>();
   const log: AuditEntry[] = [];
   /** How much of `log` has already been handed to a persister. */
   let drained = 0;
+  let sequence = 0;
+  let overflowWarned = false;
 
-  const record = (entry: AuditEntry) => {
-    log.push(entry);
-    // Bounded: the audit log is evidence, not a database. The caller persists
-    // what it wants to keep. Trimming moves the drain cursor with it, so
-    // trimming can never cause an un-persisted entry to be skipped.
-    if (log.length > 2000) {
-      const removed = log.length - 2000;
-      log.splice(0, removed);
-      drained = Math.max(0, drained - removed);
+  /**
+   * Append, and never drop anything nobody has persisted.
+   *
+   * The previous version trimmed the oldest entries once the log passed 2000
+   * and moved the drain cursor down with them — which silently destroyed
+   * un-persisted rows. Recording 2100 events before a single drain lost the
+   * first 100. The comment claiming that could not happen was simply wrong,
+   * and the test asserting `<= 2000` was written to accommodate the bug
+   * rather than catch it.
+   *
+   * Now only the *already-drained* prefix is trimmed. If nothing has been
+   * drained, nothing is trimmed, and the log grows. Unbounded memory is a
+   * worse-looking failure than silent evidence loss and a far better one:
+   * it is visible, and it does not quietly rewrite history.
+   */
+  const record = (entry: Omit<AuditEntry, "seq">) => {
+    sequence += 1;
+    log.push({ ...entry, seq: sequence });
+
+    // Reclaim only what has been handed to a persister.
+    if (drained > 0 && log.length - drained > DISPLAY_CACHE) {
+      const removable = Math.min(drained, log.length - DISPLAY_CACHE);
+      log.splice(0, removable);
+      drained -= removable;
+    }
+
+    // A backlog this size means flushing has stopped. Say so once, in the log
+    // itself, rather than letting it pass as a quiet period.
+    if (!overflowWarned && log.length - drained > UNDRAINED_ALARM) {
+      overflowWarned = true;
+      sequence += 1;
+      log.push({
+        seq: sequence,
+        at: entry.at,
+        capabilityId: "audit",
+        outcome: "refused",
+        refusal: "not-permitted",
+        detail: `${log.length - drained} audit entries are unpersisted. Something has stopped flushing them.`,
+      });
     }
   };
 
@@ -373,6 +421,10 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
 
     audit() {
       return [...log].reverse();
+    },
+
+    auditBacklog() {
+      return log.length - drained;
     },
 
     drainAudit() {

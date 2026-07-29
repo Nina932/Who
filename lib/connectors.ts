@@ -388,7 +388,21 @@ export async function statuses(): Promise<ConnectorStatus[]> {
 
 export type CallOutcome<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string; needsConnection?: boolean };
+  | {
+      ok: false;
+      error: string;
+      needsConnection?: boolean;
+      /** True once a request was actually put on the wire. */
+      reachedProvider?: boolean;
+      /**
+       * The provider may have acted anyway.
+       *
+       * A timeout or a dropped connection is not "nothing happened" — the
+       * request can arrive, be performed, and the response be lost. Treating
+       * that as failure and retrying is how an email gets sent twice.
+       */
+      uncertain?: boolean;
+    };
 
 /**
  * Scope enforcement.
@@ -429,6 +443,24 @@ async function googleFetch<T>(
 ): Promise<CallOutcome<T>> {
   const spec = CONNECTORS_BY_ID[connectorId];
 
+  // ── Runtime enforcement ────────────────────────────────────────────
+  //
+  // A lint rule catches an import; this catches a *call*. Any mutating
+  // request must arrive with a declared scope, so a module that reaches this
+  // function directly — through a renamed import, a namespace import, a
+  // dynamic import, or a re-export the seam test cannot see — is refused here
+  // rather than trusted.
+  const method = (init?.method ?? "GET").toUpperCase();
+  const mutating = method !== "GET" && method !== "HEAD";
+
+  if (mutating && !scope) {
+    return {
+      ok: false,
+      error:
+        "Refused: a mutating connector call arrived without a declared capability scope. Route it through lib/tools.ts.",
+    };
+  }
+
   // Checked before the token is fetched. A call the grant does not authorise
   // should never get as far as holding a credential.
   if (scope) {
@@ -458,11 +490,25 @@ async function googleFetch<T>(
     });
 
     if (!response.ok) {
-      return { ok: false, error: `${response.status}: ${(await response.text()).slice(0, 200)}` };
+      // The provider answered. A 4xx or 5xx with a body is a decision, not an
+      // unknown — it reached them and they declined.
+      return {
+        ok: false,
+        error: `${response.status}: ${(await response.text()).slice(0, 200)}`,
+        reachedProvider: true,
+        uncertain: response.status >= 500,
+      };
     }
     return { ok: true, data: (await response.json()) as T };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "request failed" };
+    // Thrown after the request left: a timeout, a reset, a DNS failure
+    // mid-flight. Whether the provider acted is genuinely unknown.
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "request failed",
+      reachedProvider: true,
+      uncertain: true,
+    };
   }
 }
 
@@ -664,6 +710,7 @@ export async function createSlideDeck(input: {
     "google-slides",
     `https://slides.googleapis.com/v1/presentations/${presentationId}:batchUpdate`,
     { method: "POST", body: JSON.stringify({ requests }) },
+    { required: "presentations", granted: input.granted },
   );
   if (!updated.ok) return updated;
 

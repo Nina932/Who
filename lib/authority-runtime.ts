@@ -43,13 +43,26 @@ export async function savePolicy(next: Policy): Promise<Policy> {
   return mutate<Policy, Policy>(POLICY, DEFAULT_POLICY, () => ({ next, result: next }));
 }
 
-/** Persisted separately from the grants, because the log is what you keep. */
-export async function appendAudit(entries: AuditEntry[]): Promise<void> {
+/**
+ * Persisted separately from the grants, because the log is what you keep.
+ *
+ * Entries arriving without a sequence number — the route handler records a
+ * few directly — are given one from the stored head, so the durable log stays
+ * ordered even though two producers write to it.
+ */
+export async function appendAudit(
+  entries: Array<AuditEntry | Omit<AuditEntry, "seq">>,
+): Promise<void> {
   if (entries.length === 0) return;
-  await mutate<AuditEntry[], null>(AUDIT, [], (current) => ({
-    next: [...entries, ...current].slice(0, 500),
-    result: null,
-  }));
+  await mutate<AuditEntry[], null>(AUDIT, [], (current) => {
+    let head = current[0]?.seq ?? 0;
+    const stamped = entries.map((entry) =>
+      "seq" in entry && typeof entry.seq === "number"
+        ? (entry as AuditEntry)
+        : { ...entry, seq: (head += 1) },
+    );
+    return { next: [...stamped, ...current].slice(0, 2000), result: null };
+  });
 }
 
 export async function auditLog(): Promise<AuditEntry[]> {
@@ -423,18 +436,34 @@ export async function executeApproved(
     proposeOnRefusal: false,
   });
 
-  // A refused call did not reach the world, so the ledger entry would
-  // otherwise block a legitimate retry after the reason is fixed.
-  if (!result.ok) await releaseClaim(action);
+  // Three outcomes, not two.
+  //
+  // The ledger is released *only* when the request demonstrably never left —
+  // a validation failure, a policy refusal, an unconfigured connector. Those
+  // are safe to retry. A timeout or a dropped connection is not: the provider
+  // may have acted and lost the response, and releasing the ledger there is
+  // exactly how an email gets sent twice.
+  const uncertain = result.uncertain === true;
+  if (!result.ok && !uncertain) await releaseClaim(action);
+
+  const status = result.ok ? "completed" : uncertain ? "outcome-uncertain" : "failed";
 
   const updated = await patchPending(actionId, {
-    status: result.ok ? "completed" : "failed",
+    status,
     // The receipt: what happened, with evidence. Never "Done."
     executionEvidence: result.ok ? result.summary : undefined,
-    failure: result.ok ? undefined : result.summary,
+    failure: result.ok
+      ? undefined
+      : uncertain
+        ? `${result.summary} The request left and no answer came back — whether it took effect is unknown. Check the provider before retrying.`
+        : result.summary,
   });
 
-  return { ok: result.ok, summary: result.summary, action: updated };
+  return {
+    ok: result.ok,
+    summary: updated?.failure ?? result.summary,
+    action: updated,
+  };
 }
 
 
@@ -452,4 +481,33 @@ async function releaseClaim(action: PendingAction): Promise<void> {
 export async function hasExecuted(action: PendingAction): Promise<boolean> {
   const ledger = await readCollection<Record<string, number>>(LEDGER, {});
   return ledger[idempotencyKey(action)] !== undefined;
+}
+
+
+/**
+ * Record that a request left and no answer came back.
+ *
+ * Separate from the failure path on purpose. The ledger entry stays, the
+ * status becomes terminal, and nothing retries automatically — the provider
+ * has to be checked. Exposed so a reconciler, or a person, can mark an
+ * outcome uncertain without pretending to know it failed.
+ */
+export async function markUncertain(
+  actionId: string,
+  detail: string,
+): Promise<PendingAction | null> {
+  const action = (await allPending()).find((a) => a.id === actionId);
+  if (!action) return null;
+
+  // Claim the ledger if execution never got that far, so a later retry is
+  // not waved through as fresh.
+  await mutate<Record<string, number>, null>(LEDGER, {}, (current) => ({
+    next: { ...current, [idempotencyKey(action)]: Date.now() },
+    result: null,
+  }));
+
+  return patchPending(actionId, {
+    status: "outcome-uncertain",
+    failure: `${detail} Whether it took effect is unknown. Check the provider before retrying.`,
+  });
 }

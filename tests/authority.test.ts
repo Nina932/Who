@@ -37,6 +37,27 @@ describe("registry invariants", () => {
     }
   });
 
+  it("does not claim more than it can do about an effect", () => {
+    // Deleting a Slack message does not undo its delivery. A capability that
+    // escapes the process and calls itself reversible is overstating itself.
+    for (const capability of CAPABILITIES) {
+      if (!capability.effect) continue;
+      if (capability.effect === "irreversible") {
+        assert.equal(capability.reversible, false, `${capability.id}`);
+        assert.equal(capability.level, 4, `${capability.id}`);
+      }
+      // Compensatable is still permitted below level 4 — the consequence is
+      // limited — but it must not be described as reversible.
+      if (capability.effect === "compensatable") {
+        assert.match(
+          capability.consequence,
+          /deliver|sent|seen|posted|afterwards/i,
+          `${capability.id} is compensatable but its consequence reads as undoable`,
+        );
+      }
+    }
+  });
+
   it("never marks a level-4 capability reversible", () => {
     for (const capability of CAPABILITIES) {
       if (capability.level !== 4) continue;

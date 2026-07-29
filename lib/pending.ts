@@ -70,15 +70,26 @@ export type PendingStatus =
   | "expired"
   | "executing"
   | "completed"
+  /** The request never left. Safe to retry. */
   | "failed"
+  /**
+   * The request left and the answer did not come back.
+   *
+   * A timeout is not "nothing happened" — the provider can receive a request,
+   * perform it, and lose the response. Recording this as `failed` and
+   * retrying is how an email gets sent twice. It needs a person, or a
+   * reconciliation against the provider, before anything else happens.
+   */
+  | "outcome-uncertain"
   | "cancelled";
 
-/** Statuses from which nothing further can happen. */
+/** Statuses from which nothing further can happen automatically. */
 export const TERMINAL: PendingStatus[] = [
   "rejected",
   "expired",
   "completed",
   "failed",
+  "outcome-uncertain",
   "cancelled",
 ];
 

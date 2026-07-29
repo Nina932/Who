@@ -38,6 +38,14 @@ export interface ToolResult {
    * was created. The caller shows the read-back and waits; it is not a failure.
    */
   awaitingApproval?: string;
+  /**
+   * The provider may have acted despite the failure.
+   *
+   * Carried up so execution can record `outcome-uncertain` rather than
+   * `failed` — and so a retry is a human decision rather than an automatic
+   * second send.
+   */
+  uncertain?: boolean;
 }
 
 export interface ToolSpec {
@@ -116,6 +124,8 @@ export async function runTool(
     }
   }
 
+  // A policy refusal never reached the world, so it is definitively
+  // before-effect and safe to retry.
   return {
     ok: false,
     summary: `Not run. ${outcome.reason}`,
@@ -185,6 +195,9 @@ export const TOOLS: Record<string, ToolSpec> = {
 
       const created: string[] = [];
       const skipped: string[] = [];
+      // If any single event's outcome is unknown, the whole call is unknown —
+      // a partial batch cannot be retried wholesale without risking a double.
+      let uncertain = false;
 
       for (const raw of events.slice(0, 10)) {
         const event = asRecord(raw);
@@ -209,6 +222,7 @@ export const TOOLS: Record<string, ToolSpec> = {
         if (result.ok) {
           created.push(`${summary} — ${startsAt.toISOString()}`);
         } else {
+          if (result.uncertain) uncertain = true;
           skipped.push(`"${summary}" — ${result.error}`);
         }
       }
@@ -223,7 +237,7 @@ export const TOOLS: Record<string, ToolSpec> = {
         lines.push("", "Skipped:", ...skipped.map((s) => `- ${s}`));
       }
 
-      return { ok: created.length > 0, summary: lines.join("\n") };
+      return { ok: created.length > 0, summary: lines.join("\n"), uncertain };
     },
   },
 
@@ -251,7 +265,7 @@ export const TOOLS: Record<string, ToolSpec> = {
       const result = await createMailDraft({ to, subject, body, granted });
       return result.ok
         ? { ok: true, summary: `Draft saved to Gmail for ${to} — "${subject}". Not sent.` }
-        : { ok: false, summary: `Draft failed — ${result.error}` };
+        : { ok: false, summary: `Draft failed — ${result.error}`, uncertain: result.uncertain };
     },
   },
 

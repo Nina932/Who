@@ -19,19 +19,42 @@ import { CAPABILITIES } from "../lib/authority";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 /**
- * Functions in `lib/connectors.ts` that change something outside this process.
+ * Derived, never hand-maintained.
  *
- * Reads are not listed: they are gated by capability at a different level and
+ * A fixed list is a list somebody forgets to add to. `export async function
+ * sendInvoice` would ship, be missed, and the seam test would stay green. So
+ * the mutations are read out of the connector source: any exported async
+ * function whose body issues a non-GET request.
+ *
+ * Reads are excluded deliberately — they are gated at a different level and
  * their failure mode is disclosure, not action.
  */
-const MUTATIONS = [
-  "createCalendarEvent",
-  "createMailDraft",
-  "createSlideDeck",
-  "appendToLog",
-  "postToSlack",
-  "postToLinkedIn",
-];
+/**
+ * The OAuth dance itself, which is not an action taken on the operator's
+ * behalf against third-party data — it is how the connection comes to exist.
+ * Excluded by name rather than by omission, so the exclusion is a decision
+ * somebody can disagree with rather than a gap nobody noticed.
+ */
+const OAUTH_LIFECYCLE = new Set(["exchangeCode", "refresh", "disconnect"]);
+
+async function connectorMutations(): Promise<string[]> {
+  const text = await fs.readFile(path.join(ROOT, "lib/connectors.ts"), "utf8");
+  const found: string[] = [];
+
+  const pattern = /export async function (\w+)\s*[(<]/g;
+  const starts: Array<{ name: string; at: number }> = [];
+  for (const match of text.matchAll(pattern)) {
+    starts.push({ name: match[1], at: match.index ?? 0 });
+  }
+
+  starts.forEach((start, index) => {
+    const body = text.slice(start.at, starts[index + 1]?.at ?? text.length);
+    if (OAUTH_LIFECYCLE.has(start.name)) return;
+    if (/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i.test(body)) found.push(start.name);
+  });
+
+  return found;
+}
 
 /**
  * The only modules permitted to import them.
@@ -54,7 +77,33 @@ async function sourceFiles(dir: string): Promise<string[]> {
 }
 
 describe("the execution seam is the only way out", () => {
+  it("finds the mutations by reading the connector, not from a list", async () => {
+    // If this returns nothing the whole suite passes vacuously.
+    const mutations = await connectorMutations();
+    assert.ok(mutations.length >= 5, `only found ${mutations.join(", ")}`);
+    for (const expected of [
+      "createMailDraft",
+      "createCalendarEvent",
+      "postToSlack",
+      "postToLinkedIn",
+      "appendToLog",
+    ]) {
+      assert.ok(mutations.includes(expected), `did not detect ${expected}`);
+    }
+    // The OAuth dance is not a business mutation and must stay excluded.
+    assert.ok(!mutations.includes("exchangeCode"));
+  });
+
+  it("refuses a mutating call that arrives with no declared scope", async () => {
+    // Runtime enforcement, which catches what static analysis cannot: a
+    // renamed import, a namespace import, a dynamic import, a re-export.
+    const connectors = await fs.readFile(path.join(ROOT, "lib/connectors.ts"), "utf8");
+    assert.match(connectors, /a mutating connector call arrived without a declared capability scope/);
+    assert.match(connectors, /const mutating = method !== "GET"/);
+  });
+
   it("nothing outside the authority layer imports a connector mutation", async () => {
+    const MUTATIONS = await connectorMutations();
     const offenders: string[] = [];
 
     for (const file of await sourceFiles(ROOT)) {
@@ -107,6 +156,7 @@ describe("the execution seam is the only way out", () => {
     const routes = (await sourceFiles(path.join(ROOT, "app"))).filter((f) => f.endsWith("route.ts"));
     assert.ok(routes.length > 0, "no routes found — the check would pass vacuously");
 
+    const MUTATIONS = await connectorMutations();
     for (const file of routes) {
       const text = await fs.readFile(file, "utf8");
       for (const mutation of MUTATIONS) {

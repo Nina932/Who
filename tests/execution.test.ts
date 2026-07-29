@@ -80,15 +80,53 @@ describe("the audit log records each event once", () => {
     assert.equal(broker.audit().length, 1);
   });
 
-  it("does not skip an entry when the log is trimmed", () => {
-    // Trimming moves the drain cursor with it; otherwise a busy broker would
-    // silently drop un-persisted rows off the front.
+  it("loses nothing, however far behind the persister falls", () => {
+    // The earlier version trimmed the oldest entries past 2000 and moved the
+    // cursor down with them, silently destroying un-persisted rows: 2100
+    // events in, 2000 out, 100 gone. The assertion here used to be
+    // `<= 2000`, which accommodated the bug rather than catching it.
     const broker = createBroker(policy({ ceiling: 2 }));
-    for (let i = 0; i < 2100; i += 1) broker.request("mail.send", { now: i });
+    const EVENTS = 10_000;
+    for (let i = 0; i < EVENTS; i += 1) broker.request("mail.send", { now: i });
+
     const drained = broker.drainAudit();
-    assert.ok(drained.length > 0);
-    assert.ok(drained.length <= 2000);
+    const real = drained.filter((e) => e.capabilityId !== "audit");
+    assert.equal(real.length, EVENTS, `${EVENTS - real.length} security events were lost`);
     assert.deepEqual(broker.drainAudit(), []);
+  });
+
+  it("numbers entries so a missing one is visible", () => {
+    // A gap is invisible in a list of timestamps and obvious in a sequence.
+    const broker = createBroker(policy({ ceiling: 2 }));
+    for (let i = 0; i < 500; i += 1) broker.request("mail.send", { now: i });
+    const seqs = broker
+      .drainAudit()
+      .map((e) => e.seq)
+      .sort((a, b) => a - b);
+    assert.equal(seqs.length, 500);
+    assert.ok(seqs.every((s, i) => i === 0 || s === seqs[i - 1] + 1), "sequence has a gap");
+  });
+
+  it("only reclaims memory from entries already handed over", () => {
+    const broker = createBroker(policy({ ceiling: 2 }));
+    for (let i = 0; i < 3000; i += 1) broker.request("mail.send", { now: i });
+    // Nothing drained yet, so nothing may be discarded.
+    assert.equal(broker.auditBacklog(), 3000);
+
+    broker.drainAudit();
+    for (let i = 0; i < 3000; i += 1) broker.request("mail.send", { now: i });
+    // Now the drained prefix can be trimmed, and the new events survive.
+    assert.equal(broker.drainAudit().length, 3000);
+  });
+
+  it("records the backlog itself as an event when flushing stops", () => {
+    const broker = createBroker(policy({ ceiling: 2 }));
+    for (let i = 0; i < 10_050; i += 1) broker.request("mail.send", { now: i });
+    const drained = broker.drainAudit();
+    assert.ok(
+      drained.some((e) => e.capabilityId === "audit" && /unpersisted/.test(e.detail)),
+      "a stopped persister should be visible in the log, not a quiet period",
+    );
   });
 });
 
@@ -166,6 +204,40 @@ describe("execution happens at most once", () => {
     const result = await runtime.executeApproved(proposed.action.id, "session-1");
     assert.ok(!result.ok);
     assert.match(result.summary, /not approved/);
+  });
+
+  it("never calls an ambiguous provider failure 'nothing happened'", async () => {
+    // A timeout is not a failure — the provider can receive a request, perform
+    // it, and lose the response. Treating that as failure and retrying is how
+    // an email gets sent twice.
+    const { TERMINAL } = await import("../lib/pending");
+    assert.ok(
+      TERMINAL.includes("outcome-uncertain"),
+      "an uncertain outcome must not be retried automatically",
+    );
+  });
+
+  it("keeps the ledger entry when the outcome is unknown", async () => {
+    // The whole point of the distinction: a released ledger means "safe to
+    // retry", and after a timeout that is exactly what it is not.
+    const action = await approvedAction("uncertain");
+    const runtimeModule = runtime as unknown as {
+      executeApproved: typeof runtime.executeApproved;
+    };
+
+    // The connector is unconfigured, so this path is before-effect and does
+    // release. The assertion that matters is the inverse condition: a result
+    // carrying `uncertain` must not release.
+    await runtimeModule.executeApproved(action.id, "session-1");
+    assert.equal(await runtime.hasExecuted(action), false);
+
+    const uncertainAction = await approvedAction("uncertain-2");
+    await runtime.markUncertain(uncertainAction.id, "connection dropped mid-request");
+    assert.equal(
+      await runtime.hasExecuted(uncertainAction),
+      true,
+      "an uncertain outcome must leave the ledger entry in place",
+    );
   });
 
   it("says so plainly for an action that does not exist", async () => {
