@@ -271,6 +271,43 @@ export interface CompressorSettings {
 }
 
 /**
+ * Reduction, in dB, that the knee curve applies to a given input level.
+ *
+ * Split out because the makeup calculation needs the curve's value at full
+ * scale, not just its value sample by sample.
+ */
+function kneeReductionDb(levelDb: number, settings: CompressorSettings): number {
+  const slope = 1 / settings.ratio - 1;
+  const halfKnee = settings.kneeDb / 2;
+  const over = levelDb - settings.thresholdDb;
+  if (over <= -halfKnee) return 0;
+  if (over >= halfKnee) return slope * over;
+  const knee = over + halfKnee;
+  return (slope * knee * knee) / (2 * settings.kneeDb);
+}
+
+/**
+ * The makeup gain a browser's compressor applies on its own.
+ *
+ * `DynamicsCompressorNode` is not a bare gain reducer: Blink derives a makeup
+ * gain from the curve's value at full scale and raises the whole signal by it.
+ * Ignoring that made this renderer a poor model of the thing it exists to
+ * predict — measured against Chromium on the same buffer with the same
+ * settings, the browser came out 2.54x hotter, so the output gain had been
+ * tuned against a signal 8dB quieter than the one that actually plays. In the
+ * browser the result sat pinned against the ceiling, saturating constantly.
+ *
+ * This reproduces Blink's formula rather than the measured constant, so the
+ * model stays honest if the compressor is ever retuned. It lands within about
+ * a decibel of Chromium, which is close enough to tune against and not close
+ * enough to call identical.
+ */
+export function makeupGain(settings: CompressorSettings): number {
+  const atFullScale = Math.pow(10, kneeReductionDb(0, settings) / 20);
+  return Math.pow(1 / atFullScale, 0.6);
+}
+
+/**
  * Soft-knee compression with an attack/release follower in the gain domain.
  *
  * Smoothing is applied to the *reduction*, not the level: smoothing the level
@@ -283,27 +320,16 @@ export function compress(
   settings: CompressorSettings,
 ): Float32Array {
   const output = new Float32Array(input.length);
+  const makeup = makeupGain(settings);
   const attack = Math.exp(-1 / Math.max(1, settings.attackSeconds * sampleRate));
   const release = Math.exp(-1 / Math.max(1, settings.releaseSeconds * sampleRate));
-  const slope = 1 / settings.ratio - 1;
-  const halfKnee = settings.kneeDb / 2;
   let reduction = 0;
 
   for (let i = 0; i < input.length; i += 1) {
-    const levelDb = 20 * Math.log10(Math.abs(input[i]) + 1e-9);
-    const over = levelDb - settings.thresholdDb;
-
-    let target: number;
-    if (over <= -halfKnee) target = 0;
-    else if (over >= halfKnee) target = slope * over;
-    else {
-      const knee = over + halfKnee;
-      target = (slope * knee * knee) / (2 * settings.kneeDb);
-    }
-
+    const target = kneeReductionDb(20 * Math.log10(Math.abs(input[i]) + 1e-9), settings);
     // More reduction is a louder signal arriving: that is the attack edge.
     reduction = target + (reduction - target) * (target < reduction ? attack : release);
-    output[i] = input[i] * Math.pow(10, reduction / 20);
+    output[i] = input[i] * Math.pow(10, reduction / 20) * makeup;
   }
 
   return output;

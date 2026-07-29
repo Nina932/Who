@@ -66,13 +66,19 @@ export interface ChainSpec {
   /** Modulation swing around the dry level. */
   modulationDepth: number;
   /**
-   * Makeup gain, applied last.
+   * Trim, applied last.
    *
-   * `DynamicsCompressorNode` has no makeup stage, so the chain arrives at the
-   * speakers well below what the provider sent — a voice that is *processed*
-   * but sounds weak, which is easy to mistake for processing that never ran.
-   * Because compression is level-dependent it is self-limiting: louder input is
-   * reduced harder before this multiplies it, so the headroom holds.
+   * This was originally set to 2.4 to undo compression that appeared to be
+   * costing about 14dB — an artefact of the offline model, which had no makeup
+   * stage. `DynamicsCompressorNode` has one of its own, so the real browser
+   * output was already loud, and the extra gain drove it against the ceiling
+   * on every syllable. Rendered in Chromium it measured a peak of 0.999 with
+   * the saturation squashing the machine modulation from 0.234 down to 0.208 —
+   * quietly undoing the chain's most distinctive feature in the name of
+   * loudness.
+   *
+   * Unity leaves the compressor's own makeup to set the level, which is what it
+   * is for.
    */
   outputGain: number;
   /**
@@ -121,7 +127,7 @@ export const MECHANICAL: ChainSpec = {
   dryGain: 0.86,
   modulatorHz: 46,
   modulationDepth: 0.2,
-  outputGain: 2.4,
+  outputGain: 1,
   softClipThreshold: 0.7,
 };
 
