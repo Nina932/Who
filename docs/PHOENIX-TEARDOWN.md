@@ -1,5 +1,11 @@
 # Phoenix — how the For You feed actually works
 
+> **Note.** The interactive version of this was removed from the product. The
+> analysis stands, and the machinery it proved — a live, inspectable, tunable
+> scoring pipeline that reports its own blind spot — became `/week`, where the
+> candidates are your actual work rather than someone's timeline. An essay
+> about X's algorithm did not belong inside a business-operations tool.
+
 The second image you sent is an explainer of X's recommendation pipeline:
 Grok reading your signals on the left, a feed of engagement bait in the middle,
 and "Phoenix scores and ranks content to maximize engagement and platform

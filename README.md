@@ -45,14 +45,22 @@ each step runs on its assigned model, the run halts at a human review gate, and
 rejections and outcomes are turned into learnings that are injected into the
 next run. Weekly Business Review and Content Engine are seeded.
 
-**Phoenix** (`/phoenix`) — a separate, interactive 3D teardown of X's For You
-pipeline, built from the source xAI open-sourced in January 2026: two-tower
-retrieval, the ranking transformer's candidate-isolation mask, all 19 action
-heads, and the weighted sum that becomes your feed. Move a signal or a weight
-and everything recomputes live. Full analysis in
-**[`docs/PHOENIX-TEARDOWN.md`](docs/PHOENIX-TEARDOWN.md)**.
+**The week** (`/week`) — the attention engine. Everything competing for your
+week, scored on factors you can see, weighted by dials you control, cut to the
+hours you actually have. Loops holding at their gates join the list
+automatically.
 
-![The ranking stage attention mask](docs/screenshots/phoenix-ranking.png)
+The part with teeth is the verdict at the top: *what your weights are actually
+optimising for.* Ranking a list is easy and most tools stop there. What nobody
+notices is that the same list, ranked the same way, produces a year of urgent
+weeks in which nothing compounded — so it says so. Open any item to see exactly
+which factors put it where.
+
+This replaced an interactive teardown of X's For You algorithm. The ranking
+machinery was genuinely useful; the subject matter belonged to a different
+product. The analysis survives as
+**[`docs/PHOENIX-TEARDOWN.md`](docs/PHOENIX-TEARDOWN.md)**, which is where the
+idea of showing a scorer's blind spot came from.
 
 ## Getting it on your machine
 
@@ -148,7 +156,7 @@ app/
   page.tsx              Overview cockpit (react-three-fiber)
   loops/page.tsx        Loops Engine workspace
   social/page.tsx       Social Command Center
-  phoenix/page.tsx      X For You pipeline — 3D teardown
+  week/page.tsx         The attention engine — rank, cut, and the verdict
   connect/page.tsx      Connector status, OAuth, live probes
   api/thor/route.ts     Orchestrator: attendance + routing + memory
 components/
@@ -161,9 +169,8 @@ components/
   TranscriptRail.tsx    Attributed conversation history
   AgentInspector.tsx    Per-agent charter and routing vocabulary
   social/               Platform cards, goal loop pipelines
-  phoenix/              react-three-fiber scene: five stages on camera rails
 lib/
-  phoenix.ts            Retrieval, 19 heads, the published combine formula
+  priority.ts           Factors, context, ranking under an hours budget
   models.ts             The stack: Flash / Pro / Opus / Sonnet / Haiku + routing
   loops.ts              Loops Engine — executor, review gate, learnings
   memory.ts             Durable facts: Haiku extraction, scored recall

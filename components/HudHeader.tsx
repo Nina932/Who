@@ -186,17 +186,17 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               Loops
             </Link>
             <Link
+              href="/week"
+              className="chip-attend px-3 py-1.5 label transition-colors"
+              style={{ color: "var(--color-attend)" }}
+            >
+              The week
+            </Link>
+            <Link
               href="/connect"
               className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
             >
               Connect
-            </Link>
-            <Link
-              href="/phoenix"
-              className="chip-attend px-3 py-1.5 label transition-colors"
-              style={{ color: "var(--color-attend)" }}
-            >
-              Phoenix
             </Link>
           </nav>
         </div>
