@@ -18,7 +18,7 @@
 
 import { sampleRateFromMimeType, wavFromPcm16 } from "./wav";
 
-export type SpeechProviderId = "groq" | "gemini";
+export type SpeechProviderId = "groq" | "gemini" | "local";
 
 export interface SpeechAudio {
   wav: Uint8Array;
@@ -173,6 +173,42 @@ async function synthesizeGemini(text: string, apiKey: string): Promise<SpeechAud
   };
 }
 
+/**
+ * The offline voice.
+ *
+ * Both hosted providers can be taken away by something outside this codebase —
+ * Orpheus by an organisation terms acceptance only a Groq admin can give,
+ * Gemini by a free-tier quota of ten requests a day. When they are, the
+ * cockpit was left with the operating system's narrator, which cannot carry
+ * any of the processing.
+ *
+ * eSpeak-NG compiled to WebAssembly has none of those dependencies: no key, no
+ * quota, no terms, no network, and nothing to install on Windows. On its own
+ * it sounds like a 1980s speech synthesiser, which for once is the right
+ * starting material — the chain is trying to build a machine that talks, and
+ * a flat robotic source pitched down with a sub-octave layer under it gets
+ * there more convincingly than a smooth human voice does.
+ *
+ * Last in the order, so it is what remains rather than what is preferred.
+ */
+async function synthesizeLocal(text: string): Promise<SpeechAudio> {
+  const voice = process.env.MORPHEUS_LOCAL_TTS_VOICE ?? "en-us+m3";
+  const speed = Number(process.env.MORPHEUS_LOCAL_TTS_SPEED ?? 145);
+  const pitch = Number(process.env.MORPHEUS_LOCAL_TTS_PITCH ?? 25);
+
+  const { default: text2wav } = await import("text2wav");
+  // `amplitude` is deliberately not passed: this build returns a structurally
+  // valid WAV of pure silence when it is set, which is indistinguishable from
+  // working until someone tries to listen. Level is the chain's job anyway.
+  const wav = await text2wav(text, {
+    voice,
+    speed: Number.isFinite(speed) ? speed : 145,
+    pitch: Number.isFinite(pitch) ? pitch : 25,
+  });
+
+  return { wav: new Uint8Array(wav), provider: "local", model: "espeak-ng", voice };
+}
+
 interface Candidate {
   id: SpeechProviderId;
   key?: string;
@@ -180,13 +216,17 @@ interface Candidate {
 }
 
 /**
- * Providers in preference order, skipping any without a key.
+ * Providers in preference order.
  *
  * Groq is first because Orpheus is the intended voice; the ordering is what
- * makes the eventual terms acceptance a no-op rather than a migration.
+ * makes the eventual terms acceptance a no-op rather than a migration. The
+ * local synthesiser is always last and always present — it needs no key, so
+ * there is no configuration under which the cockpit has no voice at all.
+ *
+ * Set MORPHEUS_LOCAL_TTS=off to drop it and fall back to the browser instead.
  */
 export function speechCandidates(): Candidate[] {
-  const all: Candidate[] = [
+  const hosted: Candidate[] = [
     { id: "groq", key: process.env.GROQ_API_KEY, run: synthesizeGroq },
     {
       id: "gemini",
@@ -194,7 +234,10 @@ export function speechCandidates(): Candidate[] {
       run: synthesizeGemini,
     },
   ];
-  return all.filter((candidate) => Boolean(candidate.key));
+  const configured = hosted.filter((candidate) => Boolean(candidate.key));
+
+  if (process.env.MORPHEUS_LOCAL_TTS === "off") return configured;
+  return [...configured, { id: "local", key: "built-in", run: (text) => synthesizeLocal(text) }];
 }
 
 /**

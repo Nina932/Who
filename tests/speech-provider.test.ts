@@ -71,17 +71,32 @@ afterEach(() => {
 });
 
 describe("speech providers", () => {
-  it("offers nothing when no key is configured", () => {
+  it("always has a voice, even with no key at all", () => {
     withKeys({});
-    assert.deepEqual(speechCandidates(), []);
+    // Both hosted providers can be withdrawn by someone outside this codebase.
+    // There must be no configuration in which the cockpit falls silent.
+    assert.deepEqual(
+      speechCandidates().map((candidate) => candidate.id),
+      ["local"],
+    );
   });
 
   it("prefers Groq, so Orpheus takes back over the moment its terms clear", () => {
     withKeys({ GROQ_API_KEY: "g", GOOGLE_API_KEY: "k" });
     assert.deepEqual(
       speechCandidates().map((candidate) => candidate.id),
-      ["groq", "gemini"],
+      ["groq", "gemini", "local"],
     );
+  });
+
+  it("can be told to leave speech to the browser", () => {
+    withKeys({});
+    process.env.MORPHEUS_LOCAL_TTS = "off";
+    try {
+      assert.deepEqual(speechCandidates(), []);
+    } finally {
+      delete process.env.MORPHEUS_LOCAL_TTS;
+    }
   });
 
   it("never reaches the second provider when the first answers", async () => {
@@ -176,15 +191,66 @@ describe("speech providers", () => {
 
   it("reports every refusal when nothing answers", async () => {
     withKeys({ GROQ_API_KEY: "g", GOOGLE_API_KEY: "k" });
+    // The local voice has to be switched off to reach this state at all — with
+    // it present, "nothing answers" cannot happen, which is its whole purpose.
+    process.env.MORPHEUS_LOCAL_TTS = "off";
     stubFetch({
       groq: () => new Response(TERMS_BODY, { status: 400 }),
       gemini: () => new Response("nope", { status: 401 }),
     });
 
+    try {
+      const outcome = await synthesizeSpeech("Anything.");
+      assert.equal(outcome.ok, false);
+      assert.equal(outcome.failures.length, 2);
+      assert.match(outcome.failures[1].reason, /key/i);
+    } finally {
+      delete process.env.MORPHEUS_LOCAL_TTS;
+    }
+  });
+
+  it("still speaks when both hosted providers refuse", async () => {
+    withKeys({ GROQ_API_KEY: "g", GOOGLE_API_KEY: "k" });
+    stubFetch({
+      groq: () => new Response(TERMS_BODY, { status: 400 }),
+      gemini: () => new Response("quota", { status: 429 }),
+    });
+
     const outcome = await synthesizeSpeech("Anything.");
-    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.audio.provider, "local");
+    // Both refusals still reported, so the substitution is never silent.
     assert.equal(outcome.failures.length, 2);
-    assert.match(outcome.failures[1].reason, /key/i);
+  });
+
+  it("speaks with no key, no network and no quota", async () => {
+    withKeys({});
+    // No fetch stub: reaching the network here would itself be the failure.
+    globalThis.fetch = (async () => {
+      throw new Error("the local voice must not touch the network");
+    }) as typeof globalThis.fetch;
+
+    const outcome = await synthesizeSpeech("The calendar is protected.");
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.audio.provider, "local");
+    const decoded = decodeWav(outcome.audio.wav);
+    assert.ok(decoded.sampleRate >= 8_000);
+
+    // Structure is not sound. This build returns a perfectly well-formed WAV
+    // of pure silence for some option combinations, so the audio itself has to
+    // be checked — silence would pass every other assertion here.
+    let energy = 0;
+    for (const sample of decoded.channels[0]) energy += Math.abs(sample);
+    assert.ok(energy > 1, `the local voice produced silence (energy ${energy})`);
+  });
+
+  it("never passes the option that silences the local synthesiser", async () => {
+    const source = await readFile(new URL("../lib/speech-provider.ts", import.meta.url), "utf8");
+    // Measured: `amplitude` yields a valid header over an empty buffer.
+    assert.doesNotMatch(source, /amplitude:/);
   });
 
   it("asks a named performer for nothing", async () => {
