@@ -62,6 +62,59 @@ async function loadLocalEnvironment(): Promise<void> {
   }
 }
 
+interface ModelListing {
+  data?: { id?: unknown; owned_by?: unknown }[];
+}
+
+/**
+ * Say what this key can actually reach.
+ *
+ * A refusal names one model and stops there, which leaves the obvious next
+ * question — *then what can I use* — unanswered and only findable by clicking
+ * around a console. The model list is readable with the same key, so the probe
+ * answers it directly. Names are matched loosely because Groq's speech models
+ * have not shared a prefix.
+ */
+async function reportSpeechModels(apiKey: string): Promise<void> {
+  let listing: ModelListing;
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/models", {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) {
+      console.error(`Could not list models: HTTP ${response.status}.`);
+      return;
+    }
+    listing = (await response.json()) as ModelListing;
+  } catch (error) {
+    console.error(`Could not list models: ${error instanceof Error ? error.message : error}`);
+    return;
+  }
+
+  const ids = (listing.data ?? [])
+    .map((entry) => (typeof entry.id === "string" ? entry.id : ""))
+    .filter(Boolean)
+    .sort();
+  const speech = ids.filter((id) => /tts|speech|orpheus|playai|voice|audio/i.test(id));
+
+  if (speech.length === 0) {
+    console.error(
+      `The key is valid — ${ids.length} models are visible — but none of them look\n` +
+        `like text-to-speech, so this org has no speech model available yet.\n`,
+    );
+    return;
+  }
+
+  console.error(
+    `The key is valid. Speech-capable models visible to this org:\n` +
+      speech.map((id) => `  ${id}`).join("\n") +
+      `\n\nAny of these can be tried without waiting, by setting it in .env.local:\n` +
+      `  MORPHEUS_TTS_MODEL=<id>\n` +
+      `and running the probe again. Voices differ per model, so MORPHEUS_TTS_VOICE\n` +
+      `may need changing too if the model rejects "troy".\n`,
+  );
+}
+
 const format = (measurement: VoiceMeasurement) =>
   [
     `    duration          ${measurement.seconds.toFixed(2)}s`,
@@ -107,9 +160,18 @@ async function main(): Promise<number> {
     // browser rather than in the code.
     if (/model_terms_required|terms/i.test(detail)) {
       console.error(
-        `Groq has not accepted the terms for ${model}.\n` +
-          `Open ${TERMS_URL}, accept them on that account, then run this again.\n\n${detail.slice(0, 600)}`,
+        `Groq has not accepted the terms for ${model}.\n\n` +
+          `Terms are accepted per *organization*, not per user, and only an admin\n` +
+          `of that organization can accept them. If you have already clicked\n` +
+          `accept, the usual cause is that it happened on a different org than\n` +
+          `the one this GROQ_API_KEY belongs to — check the org switcher at the\n` +
+          `top left of the console against Settings > API Keys.\n\n` +
+          `  ${TERMS_URL}\n\n${detail.slice(0, 600)}\n`,
       );
+      // A dead end is not useful on its own. What this org *can* reach right
+      // now is, because any of these can be dropped straight into
+      // MORPHEUS_TTS_MODEL without waiting on an admin.
+      await reportSpeechModels(apiKey);
       return 3;
     }
     console.error(`Groq refused with HTTP ${response.status}.\n\n${detail.slice(0, 600)}`);
