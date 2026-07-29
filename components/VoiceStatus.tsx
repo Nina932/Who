@@ -10,30 +10,53 @@
 
 import type { VoiceState } from "@/lib/useVoice";
 
-const COPY: Record<VoiceState, { text: string; tone: "signal" | "attend" | "muted" }> = {
+type Tone = "signal" | "attend" | "muted" | "success" | "danger" | "uncertain";
+
+const COPY: Record<VoiceState, { text: string; tone: Tone }> = {
   idle: { text: "Standing by", tone: "muted" },
   listening: { text: "Listening", tone: "signal" },
   // Measured, not inferred: this appears only while the microphone level is
   // actually above the speech floor. See `lib/audio.ts`.
   hearing: { text: "Hearing you", tone: "attend" },
   thinking: { text: "Thinking", tone: "signal" },
+  executing: { text: "Executing", tone: "signal" },
   speaking: { text: "Speaking · tap to stop", tone: "attend" },
+  completed: { text: "Completed", tone: "success" },
+  failed: { text: "Failed", tone: "danger" },
+  "outcome-uncertain": { text: "Outcome uncertain", tone: "uncertain" },
 };
 
 export interface VoiceStatusProps {
   state: VoiceState;
   interim: string;
+  /** True only after the browser has delivered a real microphone stream. */
+  micLive: boolean;
   onInterrupt: () => void;
 }
 
-export default function VoiceStatus({ state, interim, onInterrupt }: VoiceStatusProps) {
-  const { text, tone } = COPY[state];
+export default function VoiceStatus({
+  state,
+  interim,
+  micLive,
+  onInterrupt,
+}: VoiceStatusProps) {
+  const status =
+    state === "listening" && !micLive
+      ? { text: "Allow microphone to react", tone: "uncertain" as const }
+      : COPY[state];
+  const { text, tone } = status;
   const color =
     tone === "attend"
       ? "var(--color-attend)"
-      : tone === "signal"
-        ? "var(--color-signal)"
-        : "var(--color-ink-faint)";
+      : tone === "success"
+        ? "#69f2d0"
+        : tone === "danger"
+          ? "#ff704d"
+          : tone === "uncertain"
+            ? "#d48cff"
+            : tone === "signal"
+              ? "var(--color-signal)"
+              : "var(--color-ink-faint)";
 
   return (
     <div className="pointer-events-none absolute left-1/2 top-6 z-30 flex -translate-x-1/2 flex-col items-center gap-3">

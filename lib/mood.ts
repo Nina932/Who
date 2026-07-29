@@ -28,7 +28,16 @@
 
 import type { VoiceState } from "./useVoice";
 
-export type Mood = "calm" | "attentive" | "engaged" | "deliberating" | "declaring";
+export type Mood =
+  | "calm"
+  | "attentive"
+  | "engaged"
+  | "deliberating"
+  | "focused"
+  | "declaring"
+  | "resolved"
+  | "warning"
+  | "unsettled";
 
 export interface Palette {
   /** The body of the orb. */
@@ -92,20 +101,57 @@ export const MOODS: Record<Mood, MoodProfile> = {
     label: "Thinking",
     // Violet, and slower than listening. Work is happening that the operator
     // is not part of yet.
-    palette: { base: "#7a6cf0", hot: "#c9c0ff", accent: "#8f7dff" },
+    palette: { base: "#6f36ff", hot: "#e5d7ff", accent: "#a45cff" },
     energy: 0.45,
     pulse: 0.2,
-    hueRange: 15,
+    hueRange: 8,
+  },
+  focused: {
+    mood: "focused",
+    label: "Executing",
+    // A narrow white-blue column: energy is being committed, not explored.
+    palette: { base: "#176dff", hot: "#f4ffff", accent: "#34b8ff" },
+    energy: 0.88,
+    pulse: 0.72,
+    hueRange: 12,
   },
   declaring: {
     mood: "declaring",
     label: "Speaking",
     // Warm, because it is the one state where the floor belongs to Morpheus.
     // Amber against an otherwise entirely cold interface is unmistakable.
-    palette: { base: "#4fd8e8", hot: "#ffe3a8", accent: "#f2c14e" },
+    palette: { base: "#e88724", hot: "#fff1bc", accent: "#ffb52e" },
     energy: 1,
     pulse: 0.62,
     hueRange: 35,
+  },
+  resolved: {
+    mood: "resolved",
+    label: "Completed",
+    // A short green-cyan release, deliberately close to the house cyan so
+    // success feels like resolution rather than a new brand colour.
+    palette: { base: "#22c7ba", hot: "#eaffff", accent: "#69f2d0" },
+    energy: 0.92,
+    pulse: 0.86,
+    hueRange: 18,
+  },
+  warning: {
+    mood: "warning",
+    label: "Failed",
+    palette: { base: "#b64f2b", hot: "#ffd0a6", accent: "#ff704d" },
+    energy: 0.72,
+    pulse: 0.32,
+    hueRange: 10,
+  },
+  unsettled: {
+    mood: "unsettled",
+    label: "Outcome uncertain",
+    // Amber against violet is intentionally unresolved: neither success nor
+    // failure owns the frame until reconciliation does.
+    palette: { base: "#7a55c7", hot: "#ffd49a", accent: "#d48cff" },
+    energy: 0.66,
+    pulse: 0.44,
+    hueRange: 22,
   },
 };
 
@@ -114,7 +160,11 @@ const BY_STATE: Record<VoiceState, Mood> = {
   listening: "attentive",
   hearing: "engaged",
   thinking: "deliberating",
+  executing: "focused",
   speaking: "declaring",
+  completed: "resolved",
+  failed: "warning",
+  "outcome-uncertain": "unsettled",
 };
 
 export function moodFor(state: VoiceState): MoodProfile {

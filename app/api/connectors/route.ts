@@ -4,6 +4,8 @@ import {
   CONNECTORS_BY_ID,
   authorizeUrl,
   disconnect,
+  getFacebookProfile,
+  getLinkedInProfile,
   listCalendarEvents,
   listDriveFiles,
   listRecentMail,
@@ -52,10 +54,10 @@ export async function POST(request: Request) {
     case "connect": {
       const url = authorizeUrl(connectorId, makeState(connectorId));
       if (!url) {
+        const provider = CONNECTORS_BY_ID[connectorId].provider;
         return NextResponse.json(
           {
-            error:
-              "Google OAuth is not configured. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET.",
+            error: `${provider} OAuth is not configured. Add that provider's client id and secret first.`,
           },
           { status: 400 },
         );
@@ -75,7 +77,16 @@ export async function POST(request: Request) {
           ? await listDriveFiles()
           : connectorId === "google-calendar"
             ? await listCalendarEvents(7)
-            : await listRecentMail(5);
+            : connectorId === "gmail" || connectorId === "gmail-company"
+              ? await listRecentMail(5, connectorId)
+              : connectorId === "facebook-profile"
+                ? await getFacebookProfile()
+                : connectorId === "linkedin"
+                  ? await getLinkedInProfile()
+                : {
+                    ok: false as const,
+                    error: "This connector does not have a safe read probe yet.",
+                  };
 
       return NextResponse.json(
         result.ok

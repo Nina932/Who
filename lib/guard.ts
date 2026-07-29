@@ -28,7 +28,20 @@ function sameOrigin(request: Request): boolean {
   if (!origin) return true;
 
   try {
-    return new URL(origin).host === new URL(request.url).host;
+    const source = new URL(origin);
+    const target = new URL(request.url);
+    if (source.host === target.host) return true;
+
+    // Next may canonicalise its internal request URL to `localhost` while the
+    // browser preview is open on `127.0.0.1`. They are the same local machine
+    // and the same port, not a cross-site caller.
+    const loopback = (hostname: string) =>
+      hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+    return (
+      loopback(source.hostname) &&
+      loopback(target.hostname) &&
+      source.port === target.port
+    );
   } catch {
     return false;
   }

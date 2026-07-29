@@ -105,9 +105,19 @@ export default function CommandDock({
       ? "HEARING YOU…"
       : state === "speaking"
         ? "SPEAKING"
-        : state === "thinking"
+        : state === "executing"
+          ? "EXECUTING"
+          : state === "completed"
+            ? "COMPLETED"
+            : state === "failed"
+              ? "FAILED"
+              : state === "outcome-uncertain"
+                ? "CHECK REQUIRED"
+          : state === "thinking"
           ? "WORKING"
-          : listening
+          : listening && !micLive
+            ? "ALLOW MICROPHONE"
+            : listening
             ? "AWAITING YOU"
             : "TAP TO SPEAK";
 
@@ -214,7 +224,7 @@ export default function CommandDock({
         <button
           type="button"
           onClick={submit}
-          disabled={!draft.trim() || state === "thinking"}
+          disabled={!draft.trim() || state === "thinking" || state === "executing"}
           className="chip shrink-0 px-5 py-2.5 label-lit transition-opacity disabled:opacity-30"
         >
           Send

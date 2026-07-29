@@ -6,9 +6,9 @@
  * this system's name — a rights problem, and worse, a derivative one. What is
  * wanted is the *register*, which is describable without copying anybody:
  *
- *   A deep, deliberate, faintly metallic voice with controlled bass
- *   resonance. Calm authority rather than menace. Short pauses before
- *   conclusions. Never cheerful without reason, never raised.
+ *   A very deep, deliberate, metallic command voice with controlled bass
+ *   resonance. Restrained power, dry amusement, and clean consonants rather
+ *   than shouting. Short pauses before conclusions; never chirpy or rushed.
  *
  * The browser gives three levers — pitch, rate, and which installed voice —
  * so this is what is reachable without shipping an audio pipeline. Real
@@ -21,7 +21,7 @@
 import type { Risk } from "./intent";
 
 export interface Delivery {
-  /** 0 is the floor the spec allows, and where this sits by default. */
+  /** Deep, but above the floor so the engine can still shape intonation. */
   pitch: number;
   /** Below about 0.7, diction smears on most installed voices. */
   rate: number;
@@ -31,19 +31,147 @@ export interface Delivery {
 
 export const PROFILE = {
   name: "Morpheus",
-  register: "Very deep baritone",
-  cadence: "Slow, deliberate, concise",
-  texture: "Subtle metallic resonance",
-  emotion: "Calm authority rather than aggression",
-  delivery: "Short pauses before important conclusions",
-  never: ["shouts", "sounds cheerful without reason", "hurries a consequential sentence"],
+  register: "Very deep mechanical baritone",
+  cadence: "Slow, deliberate, clipped",
+  texture: "Dense metallic resonance with clean consonants",
+  emotion: "Controlled power with occasional dry amusement",
+  delivery: "Weighted openings and short pauses before conclusions",
+  never: ["shouts", "sounds chirpy", "hurries a consequential sentence"],
 } as const;
 
 const BASE: Delivery = {
-  pitch: Number(process.env.NEXT_PUBLIC_MORPHEUS_VOICE_PITCH ?? 0),
-  rate: Number(process.env.NEXT_PUBLIC_MORPHEUS_VOICE_RATE ?? 0.78),
-  beatMs: 260,
+  // Extreme pitch shifting makes browser voices stress the wrong syllables.
+  // Keep enough weight to sound grounded while leaving the voice engine room
+  // to perform its own sentence melody.
+  pitch: Number(process.env.NEXT_PUBLIC_MORPHEUS_VOICE_PITCH ?? 0.68),
+  rate: Number(process.env.NEXT_PUBLIC_MORPHEUS_VOICE_RATE ?? 0.88),
+  beatMs: 240,
 };
+
+/** Turn written UI punctuation into something browser TTS can phrase naturally. */
+export function speechText(text: string): string {
+  return text
+    .replace(/\[source:[^\]]*\]/gi, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/gm, "")
+    .replace(/[*_`#]/g, "")
+    .replace(/\s+[—–]\s+/g, ", ")
+    .replace(/\s*;\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.!?])/g, "$1")
+    .trim();
+}
+
+/**
+ * Split completed speech at natural boundaries for providers with short input
+ * limits. The words are unchanged; only whitespace at a boundary is removed.
+ */
+export function speechChunks(text: string, maxLength = 165): string[] {
+  const remaining = speechText(text);
+  if (!remaining || maxLength < 20) return remaining ? [remaining] : [];
+
+  const chunks: string[] = [];
+  let rest = remaining;
+  while (rest.length > maxLength) {
+    const window = rest.slice(0, maxLength + 1);
+    const sentence = Math.max(
+      window.lastIndexOf(". "),
+      window.lastIndexOf("? "),
+      window.lastIndexOf("! "),
+    );
+    const comma = Math.max(window.lastIndexOf(", "), window.lastIndexOf(": "));
+    const whitespace = window.lastIndexOf(" ");
+    const cut =
+      sentence >= Math.floor(maxLength * 0.45)
+        ? sentence + 1
+        : comma >= Math.floor(maxLength * 0.6)
+          ? comma + 1
+          : whitespace > 0
+            ? whitespace
+            : maxLength;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+/**
+ * A sound is not an interruption. Only an explicit floor-taking phrase is.
+ *
+ * Speech recognition commonly spells the name phonetically, so the small
+ * alias set covers observed variants without turning ordinary words into
+ * commands.
+ */
+export function isSpokenInterrupt(text: string): boolean {
+  const phrase = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}'\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(?:morpheus|morphius|morphews|morpheous|murphy)\b|^(?:stop|wait|pause|quiet|enough|hold on)\b/.test(
+    phrase,
+  );
+}
+
+function spokenWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}'\s-]/gu, " ")
+    .replace(/[-']/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Remove speech-synthesis audio that recognition returns as operator speech.
+ *
+ * Echo cancellation is helpful, not authoritative. Chromium can deliver the
+ * final recognition result after playback has technically ended, so a boolean
+ * "speaking" flag alone still leaks a whole assistant sentence into the next
+ * turn. This finds a substantial spoken prefix anywhere in the last playback,
+ * drops it, and preserves any genuinely new words the operator appended.
+ */
+export function withoutPlaybackEcho(
+  transcript: string,
+  lastPlayback: string,
+): string {
+  const heard = spokenWords(transcript);
+  const spoken = spokenWords(lastPlayback);
+  if (heard.length < 5 || spoken.length < 5) return transcript.trim();
+
+  const maxLength = Math.min(heard.length, spoken.length);
+  // The operator may begin talking before the recognizer emits the delayed
+  // speaker echo: "which ten percent [echoed assistant sentence]". Search the
+  // whole recognized phrase, remove only the matched playback segment, and
+  // preserve genuine words on either side.
+  for (let length = maxLength; length >= 5; length -= 1) {
+    for (
+      let heardStart = 0;
+      heardStart + length <= heard.length;
+      heardStart += 1
+    ) {
+      for (
+        let spokenStart = 0;
+        spokenStart + length <= spoken.length;
+        spokenStart += 1
+      ) {
+        let matches = 0;
+        for (let index = 0; index < length; index += 1) {
+          if (heard[heardStart + index] === spoken[spokenStart + index]) {
+            matches += 1;
+          }
+        }
+        if (matches / length < 0.72) continue;
+        return [
+          ...heard.slice(0, heardStart),
+          ...heard.slice(heardStart + length),
+        ].join(" ");
+      }
+    }
+  }
+  return transcript.trim();
+}
 
 /**
  * Delivery shifts with risk — the one expressive rule worth having.
@@ -73,4 +201,20 @@ export function deliveryFor(risk: Risk): Delivery {
  * of them is the intended voice; they are the closest the platform offers
  * until a real TTS backend is wired in.
  */
-export const PREFERRED_VOICES = ["david", "mark", "daniel", "alex", "george", "rishi"];
+export const PREFERRED_VOICES = [
+  "guy natural",
+  "andrew natural",
+  "ryan natural",
+  "christopher natural",
+  "eric natural",
+  "guy",
+  "andrew",
+  "ryan",
+  "christopher",
+  "david",
+  "mark",
+  "daniel",
+  "alex",
+  "george",
+  "rishi",
+];

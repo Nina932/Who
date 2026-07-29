@@ -14,7 +14,17 @@ import { MOODS, hueWindow, moodFor, toRgb, type Mood } from "../lib/mood";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-const STATES = ["idle", "listening", "hearing", "thinking", "speaking"] as const;
+const STATES = [
+  "idle",
+  "listening",
+  "hearing",
+  "thinking",
+  "executing",
+  "speaking",
+  "completed",
+  "failed",
+  "outcome-uncertain",
+] as const;
 
 describe("every voice state has a distinct look", () => {
   it("maps all five states", () => {
@@ -32,7 +42,7 @@ describe("every voice state has a distinct look", () => {
       assert.equal(seen.get(key), undefined, `${profile.mood} duplicates ${seen.get(key)}`);
       seen.set(key, profile.mood);
     }
-    assert.equal(seen.size, 5);
+    assert.equal(seen.size, 9);
   });
 
   it("makes thinking visibly not-listening", () => {
@@ -130,5 +140,36 @@ describe("mood and voice stay separate all the way to the shader", () => {
     assert.ok(calls.length >= 2, "only one surface is driven by the voice");
     assert.match(scene, /function WaveFloor\(/);
     assert.match(scene, /function RisingStreams\(/);
+  });
+
+  it("flows the surface instead of rhythmically scaling the whole orb", async () => {
+    const scene = await fs.readFile(path.join(ROOT, "components/morpheus/CockpitScene.tsx"), "utf8");
+    const shaders = await fs.readFile(path.join(ROOT, "components/morpheus/shaders.ts"), "utf8");
+
+    assert.doesNotMatch(
+      scene,
+      /const breath = 1 \+ Math\.sin/,
+      "the entire orb still expands and contracts on a timer",
+    );
+    assert.match(shaders, /vec3 currentA =/);
+    assert.match(shaders, /vec3 currentB =/);
+    assert.match(shaders, /float warp = fbm/);
+    assert.match(shaders, /float bassFlow = sin/);
+    assert.match(scene, /const breathX = Math\.sin/);
+    assert.match(scene, /const breathY =/);
+    assert.match(scene, /const breathZ =/);
+    assert.doesNotMatch(
+      scene,
+      /setScalar\([^)]*breath/,
+      "ambient breathing must not become uniform whole-body pulsing",
+    );
+  });
+
+  it("electrifies only attending task links and scales traffic with task load", async () => {
+    const scene = await fs.readFile(path.join(ROOT, "components/morpheus/CockpitScene.tsx"), "utf8");
+    assert.match(scene, /const electrical = attend \* stateDrive/);
+    assert.match(scene, /const sparkCount = primary \? Math\.min\(3, 1 \+ taskLoad\) : 1/);
+    assert.match(scene, /voiceState === "thinking"/);
+    assert.match(scene, /voiceState === "executing"/);
   });
 });

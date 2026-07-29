@@ -17,7 +17,9 @@ import HudHeader from "@/components/HudHeader";
 import SpecialistCallout from "@/components/SpecialistCallout";
 import TranscriptRail from "@/components/TranscriptRail";
 import VoiceStatus from "@/components/VoiceStatus";
+import NewsDock from "@/components/NewsDock";
 import { AGENTS_BY_ID } from "@/lib/agents";
+import type { LiveHeadline } from "@/lib/live-news";
 import {
   decideAttendance,
   turnId,
@@ -46,33 +48,37 @@ const EMPTY_ATTENDANCE: AttendanceDecision = {
   confidence: 0,
 };
 
-const OPENERS = [
-  "What should I focus on today?",
-  "Draft a post about the voice rebuild",
-  "How is runway looking?",
-  "Find out what competitors charge",
-];
-
 export default function Cockpit() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [attendance, setAttendance] = useState<AttendanceDecision>(EMPTY_ATTENDANCE);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [micOn, setMicOn] = useState(false);
   const [local, setLocal] = useState(true);
+  const [news, setNews] = useState<LiveHeadline[]>([]);
 
   // Read inside the async request without making `ask` depend on every turn.
   const turnsRef = useRef<Turn[]>([]);
   turnsRef.current = turns;
 
   const askRef = useRef<(text: string, forceAgentId?: string) => void>(() => {});
+  const activeRequestRef = useRef<AbortController | null>(null);
 
   const voice = useVoice({
     onUtterance: (text) => askRef.current(text),
+    onInterrupt: () => activeRequestRef.current?.abort(),
   });
-  const { beginSpeech, speakChunk, endSpeech, setState: setVoiceState } = voice;
+  const {
+    speak,
+    setState: setVoiceState,
+    showOutcome,
+    stopSpeaking,
+  } = voice;
 
   const ask = useCallback(
     async (text: string, forceAgentId?: string) => {
+      activeRequestRef.current?.abort();
+      const controller = new AbortController();
+      activeRequestRef.current = controller;
       const operatorTurn: Turn = {
         id: turnId("op"),
         role: "operator",
@@ -92,25 +98,25 @@ export default function Cockpit() {
         : decideAttendance(text);
       setAttendance(optimistic);
 
+      let responseStarted = false;
       try {
         const response = await fetch("/api/morpheus", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ utterance: text, history, forceAgentId }),
+          signal: controller.signal,
         });
 
         if (!response.ok || !response.body) {
           throw new Error(`Orchestrator returned ${response.status}`);
         }
+        responseStarted = true;
 
         // The reply arrives as it is generated. A placeholder turn is appended
         // up front and rewritten in place as deltas land.
         const replyId = turnId("th");
         let reply = "";
-        // Only whole sentences are handed to speech — synthesising fragments
-        // makes the cadence robotic.
-        let unspoken = "";
-        beginSpeech();
+        let sawDone = false;
 
         setTurns((prev) => [
           ...prev,
@@ -122,7 +128,9 @@ export default function Cockpit() {
         let buffer = "";
 
         const handle = (event: string, payload: Record<string, unknown>) => {
+          if (controller.signal.aborted) return;
           if (event === "meta") {
+            setVoiceState("executing");
             const meta = payload as unknown as { attendance?: AttendanceDecision };
             if (meta.attendance) {
               setAttendance(meta.attendance);
@@ -137,26 +145,33 @@ export default function Cockpit() {
           } else if (event === "delta") {
             const delta = String(payload.text ?? "");
             reply += delta;
-            unspoken += delta;
             setTurns((prev) =>
               prev.map((t) => (t.id === replyId ? { ...t, text: reply } : t)),
             );
-
-            const boundary = unspoken.lastIndexOf(". ");
-            const end = Math.max(boundary, unspoken.lastIndexOf("? "), unspoken.lastIndexOf("! "));
-            if (end > 0) {
-              speakChunk(unspoken.slice(0, end + 1));
-              unspoken = unspoken.slice(end + 1);
-            }
           } else if (event === "done") {
-            if (unspoken.trim()) speakChunk(unspoken);
-            unspoken = "";
-            endSpeech();
+            sawDone = true;
             setLocal(Boolean(payload.local));
+          } else if (event === "news") {
+            const incoming = payload.headlines;
+            if (Array.isArray(incoming)) {
+              setNews(incoming as LiveHeadline[]);
+            }
+          } else if (event === "action") {
+            const type = String(payload.type ?? "");
+            const url = String(payload.url ?? "");
+            if (
+              type === "navigate" &&
+              (url.startsWith("/") ||
+                url.startsWith("https://accounts.google.com/") ||
+                url.startsWith("https://www.facebook.com/"))
+            ) {
+              window.location.assign(url);
+            }
           }
         };
 
         for (;;) {
+          if (controller.signal.aborted) break;
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -176,9 +191,17 @@ export default function Cockpit() {
           }
         }
 
-        // The stream can end without a `done` frame if the server dies.
-        endSpeech();
+        // A stream ending without its receipt is not success. Keep it visually
+        // distinct so a partial answer cannot look completed.
+        if (sawDone) {
+          if (reply.trim()) speak(reply);
+          else showOutcome("completed");
+        } else {
+          stopSpeaking();
+          showOutcome("outcome-uncertain", 1800);
+        }
       } catch (error) {
+        if (controller.signal.aborted) return;
         setTurns((prev) => [
           ...prev,
           {
@@ -191,10 +214,17 @@ export default function Cockpit() {
             at: Date.now(),
           },
         ]);
-        setVoiceState(micOn ? "listening" : "idle");
+        showOutcome(responseStarted ? "outcome-uncertain" : "failed", 1800);
+      } finally {
+        if (activeRequestRef.current === controller) activeRequestRef.current = null;
       }
     },
-    [beginSpeech, endSpeech, micOn, setVoiceState, speakChunk],
+    [
+      setVoiceState,
+      showOutcome,
+      speak,
+      stopSpeaking,
+    ],
   );
 
   askRef.current = (text, forceAgentId) => {
@@ -234,11 +264,22 @@ export default function Cockpit() {
         />
       </div>
 
-      <HudHeader voiceState={voice.state} voiceEngaged={micOn} local={local} />
+      <HudHeader
+        voiceState={voice.state}
+        voiceEngaged={micOn}
+        local={local}
+        onNews={setNews}
+      />
+
+      <div className="workforce-key pointer-events-none absolute right-8 top-40 z-10 hidden md:block">
+        <div>Specialists</div>
+        <span>Hover or tap a light</span>
+      </div>
 
       <VoiceStatus
         state={voice.state}
         interim={voice.interim}
+        micLive={voice.micLive}
         onInterrupt={voice.stopSpeaking}
       />
 
@@ -250,29 +291,13 @@ export default function Cockpit() {
       />
 
       <TranscriptRail turns={turns} />
+      <NewsDock headlines={news} />
 
       <AgentInspector
         agentId={selectedId}
         onClose={() => setSelectedId(null)}
         onSummon={summon}
       />
-
-      {/* Openers, shown only until the operator says something. */}
-      {turns.length === 0 ? (
-        <div className="pointer-events-auto absolute bottom-28 left-1/2 z-20 flex -translate-x-1/2 flex-wrap justify-center gap-2 px-8">
-          {OPENERS.map((opener) => (
-            <button
-              key={opener}
-              type="button"
-              onClick={() => void ask(opener)}
-              className="chip px-3.5 py-2 text-[11px] transition-colors hover:text-[color:var(--color-signal)]"
-              style={{ color: "var(--color-ink-faint)" }}
-            >
-              {opener}
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       <CommandDock
         state={voice.state}

@@ -26,6 +26,8 @@ export interface Fact {
   createdAt: number;
   /** Bumped whenever the fact is recalled, so stale facts are visible. */
   recalled: number;
+  /** Set only after the operator-language grounding gate succeeds. */
+  grounded?: true;
 }
 
 const COLLECTION = "memory";
@@ -34,11 +36,13 @@ export async function allFacts(): Promise<Fact[]> {
   return readCollection<Fact[]>(COLLECTION, []);
 }
 
-const EXTRACT_SYSTEM = `You extract durable facts from a conversation between an operator and their AI co-founder.
+const EXTRACT_SYSTEM = `You extract durable facts stated by the OPERATOR.
 
 A durable fact is still true in a month: a preference, a decision and its reason, a person and their role, a hard constraint, a standing goal.
 
-NOT durable: pleasantries, one-off questions, anything about the current moment, anything the assistant said about itself, speculation.
+Use ONLY claims explicitly present in the operator's own words. A question is not a fact. A topic the operator asks about is not proof that it applies to them. Never extract a claim introduced only by an assistant reply.
+
+NOT durable: pleasantries, one-off questions, commands without a durable preference, anything about the current moment, anything the assistant said about itself, speculation.
 
 Return ONLY a JSON array. Each element: {"text": string, "kind": "preference"|"decision"|"person"|"constraint"|"goal"|"fact", "confidence": number between 0 and 1}
 
@@ -48,13 +52,13 @@ Write each fact as a standalone sentence that makes sense with no other context.
  * Extract durable facts from one exchange and merge them into memory.
  * Returns only the facts that were actually new.
  */
-export async function learnFrom(operatorText: string, replyText: string): Promise<Fact[]> {
+export async function learnFrom(operatorText: string, _replyText: string): Promise<Fact[]> {
   const result = await callRole("extract", {
     system: EXTRACT_SYSTEM,
     messages: [
       {
         role: "user",
-        content: `OPERATOR: ${operatorText}\n\nASSISTANT: ${replyText}`,
+        content: `OPERATOR STATEMENT:\n${operatorText}`,
       },
     ],
     json: true,
@@ -80,9 +84,14 @@ export async function learnFrom(operatorText: string, replyText: string): Promis
       source: operatorText.slice(0, 240),
       createdAt: Date.now(),
       recalled: 0,
+      grounded: true as const,
     }))
     // A low-confidence "durable" fact is usually a hallucinated one.
-    .filter((f) => f.confidence >= 0.45);
+    .filter(
+      (f) =>
+        f.confidence >= 0.45 &&
+        groundedInOperator(f.text, operatorText),
+    );
 
   if (candidates.length === 0) return [];
 
@@ -92,6 +101,64 @@ export async function learnFrom(operatorText: string, replyText: string): Promis
     );
     return { next: [...current, ...fresh], result: fresh };
   });
+}
+
+const GROUNDING_STOP = new Set([
+  "about", "after", "assistant", "because", "being", "could", "from", "have",
+  "operator", "should", "that", "their", "there", "these", "this", "user",
+  "what", "when", "where", "which", "with", "would", "your",
+]);
+
+function groundingTerms(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/gu)
+      .filter((word) => word.length > 3 && !GROUNDING_STOP.has(word)),
+  );
+}
+
+/**
+ * A second, model-independent gate.
+ *
+ * The extractor previously learned the assistant's invented biography from
+ * questions such as "tell me about yourself". Questions without a first-person
+ * assertion are never memory, and a proposed fact must share material language
+ * with what the operator actually said.
+ */
+export function groundedInOperator(candidate: string, operatorText: string): boolean {
+  const trimmed = operatorText.trim();
+  const looksLikeQuestion =
+    /\?$/.test(trimmed) ||
+    /^(?:can|could|do|does|did|is|are|was|were|what|when|where|which|who|why|how|tell|show|give)\b/i.test(
+      trimmed,
+    );
+  const hasFirstPersonClaim =
+    /\b(?:i am|i'm|i have|i've|i need|i want|i prefer|i like|i dislike|i do not|i don't|my|we are|we're|we have|we need|our)\b/i.test(
+      trimmed,
+    );
+  if (looksLikeQuestion && !hasFirstPersonClaim) return false;
+
+  const source = groundingTerms(operatorText);
+  const proposed = groundingTerms(candidate);
+  if (!source.size || !proposed.size) return false;
+
+  let shared = 0;
+  for (const term of proposed) if (source.has(term)) shared += 1;
+  return shared / Math.min(proposed.size, 5) >= 0.4;
+}
+
+/**
+ * Old stores predate the explicit `grounded` marker. They may still be used
+ * only when the deterministic grounding gate can reproduce the decision from
+ * their saved operator source. This quarantines historical extractor fiction
+ * without discarding genuinely operator-stated memories.
+ */
+export function trustedForRecall(fact: Fact): boolean {
+  return (
+    fact.grounded === true ||
+    groundedInOperator(fact.text, fact.source)
+  );
 }
 
 /** Cheap near-duplicate check so memory doesn't fill with rephrasings. */
@@ -119,7 +186,7 @@ function similar(a: string, b: string): boolean {
  * memory retrieval on every turn has to be free.
  */
 export async function recall(utterance: string, limit = 8): Promise<Fact[]> {
-  const facts = await allFacts();
+  const facts = (await allFacts()).filter(trustedForRecall);
   if (facts.length === 0) return [];
 
   const terms = new Set(
@@ -183,6 +250,7 @@ export async function remember(text: string, kind: FactKind = "fact"): Promise<F
     source: "stated directly by the operator",
     createdAt: Date.now(),
     recalled: 0,
+    grounded: true,
   };
   return mutate<Fact[], Fact>(COLLECTION, [], (current) => ({
     next: [...current, fact],

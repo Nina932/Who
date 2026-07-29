@@ -86,6 +86,61 @@ export function timeZone(): string | undefined {
   return env("MORPHEUS_TZ") || undefined;
 }
 
+export interface LocalContext {
+  city: string;
+  timeZone: string;
+  localDateTime: string;
+}
+
+/** One canonical location/clock snapshot for both prompts and direct answers. */
+export function localContext(at: number = Date.now()): LocalContext {
+  const zone =
+    timeZone() ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "local system time";
+  let localDateTime: string;
+  try {
+    localDateTime = new Intl.DateTimeFormat("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: zone === "local system time" ? undefined : zone,
+    }).format(at);
+  } catch {
+    localDateTime = new Date(at).toLocaleString("en-GB");
+  }
+  return { city: AMBIENT.city.trim(), timeZone: zone, localDateTime };
+}
+
+export function renderLocalContext(at: number = Date.now()): string {
+  const context = localContext(at);
+  return [
+    "CURRENT OPERATOR CONTEXT. Treat this as live clock context, not memory:",
+    `- Location: ${context.city || "not configured"}`,
+    `- Time zone: ${context.timeZone}`,
+    `- Local date and time: ${context.localDateTime}`,
+    "- Interpret today, tomorrow, weekdays, deadlines, and calendar times in this time zone unless the operator names another one.",
+  ].join("\n");
+}
+
+export function requestsLocalContext(utterance: string): boolean {
+  return /\b(?:what(?:'s| is) (?:the )?(?:time|date|day|time ?zone|my location)|what time is it|what time ?zone am i in|where am i|where are we|which time ?zone|are you aware of my (?:location|time ?zone))\b/i.test(
+    utterance,
+  );
+}
+
+export function localContextReply(at: number = Date.now()): string {
+  const context = localContext(at);
+  const where = context.city
+    ? `You're in ${context.city}, using ${context.timeZone}.`
+    : `Your time zone is ${context.timeZone}, but your city is not configured.`;
+  return `${where} Your local date and time is ${context.localDateTime}.`;
+}
+
 export function localHour(at: number = Date.now()): number {
   const zone = timeZone();
   if (!zone) return new Date(at).getHours();

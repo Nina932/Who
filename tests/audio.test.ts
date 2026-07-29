@@ -312,9 +312,22 @@ describe("the shader and the scene agree on their uniforms", () => {
       assert.ok(declared.has(name), `${name} is not declared in any shader`);
       assert.ok(supplied.has(name), `${name} is never given a value`);
     }
+    assert.ok(declared.has("uEmphasis"), "the shader cannot receive emphasis attacks");
+    assert.ok(supplied.has("uEmphasis"), "the scene never supplies emphasis attacks");
     for (const name of supplied) {
       assert.ok(declared.has(name), `the scene sets ${name}, which no shader declares`);
     }
+  });
+
+  it("declares the hot colour inside the shell shader that uses it", async () => {
+    const shaders = await fs.readFile(path.join(ROOT, "components/morpheus/shaders.ts"), "utf8");
+    const shell = shaders.slice(
+      shaders.indexOf("export const SHELL_FRAG"),
+      shaders.indexOf("export const VOLUME_FRAG"),
+    );
+
+    assert.match(shell, /uniform vec3 uHot;/);
+    assert.match(shell, /mix\(uColor, uHot,/);
   });
 
   it("assigns the voice uniforms every frame rather than at render", async () => {
@@ -341,6 +354,53 @@ describe("the shader and the scene agree on their uniforms", () => {
       "levels are dereferenced during render, which freezes them",
     );
   });
+
+  it("expands quiet speech into useful visual range", async () => {
+    const scene = await fs.readFile(path.join(ROOT, "components/morpheus/CockpitScene.tsx"), "utf8");
+    const shaders = await fs.readFile(path.join(ROOT, "components/morpheus/shaders.ts"), "utf8");
+    assert.match(scene, /Math\.sqrt\(v\.volume\)/);
+    assert.match(shaders, /sqrt\(clamp\(uVoiceVolume, 0\.0, 1\.0\)\)/);
+  });
+});
+
+describe("the core stays fluid without becoming cryptic", () => {
+  it("eases polar deformation and does not render the solid light cone", async () => {
+    const shaders = await fs.readFile(path.join(ROOT, "components/morpheus/shaders.ts"), "utf8");
+    const scene = await fs.readFile(path.join(ROOT, "components/morpheus/CockpitScene.tsx"), "utf8");
+
+    assert.match(shaders, /float poleBand = smoothstep/);
+    assert.match(shaders, /mix\(0\.16, 1\.0, poleBand\)/);
+    assert.doesNotMatch(scene, /<LightColumn/);
+    assert.doesNotMatch(scene, /DustField/);
+  });
+
+  it("identifies orbit lights without making the camera dodge the cursor", async () => {
+    const scene = await fs.readFile(path.join(ROOT, "components/morpheus/CockpitScene.tsx"), "utf8");
+    const page = await fs.readFile(path.join(ROOT, "app/page.tsx"), "utf8");
+
+    assert.match(scene, /agent-hover-label/);
+    assert.match(scene, /pointer\.current\.x \* 0\.08/);
+    assert.match(page, /Hover or tap a light/);
+  });
+});
+
+describe("microphone startup keeps the browser gesture alive", () => {
+  it("creates and resumes audio before waiting for microphone permission", async () => {
+    // Chromium may suspend a context constructed only after the permission
+    // promise resolves because that continuation is no longer the click.
+    // A live-looking UI with a suspended context measures perfect silence.
+    const source = await fs.readFile(path.join(ROOT, "lib/audio.ts"), "utf8");
+    const createAt = source.indexOf("const context = new AudioCtx()");
+    const resumeAt = source.indexOf("await context.resume()");
+    const permissionAt = source.indexOf("navigator.mediaDevices.getUserMedia");
+
+    assert.ok(createAt >= 0, "AudioContext is never created");
+    assert.ok(resumeAt > createAt, "AudioContext is not resumed after creation");
+    assert.ok(
+      permissionAt > resumeAt,
+      "microphone permission is awaited before AudioContext resume, losing the click gesture",
+    );
+  });
 });
 
 // ── The state machine ────────────────────────────────────────────────────
@@ -348,7 +408,19 @@ describe("the shader and the scene agree on their uniforms", () => {
 describe("hearing is a measured state, not an inferred one", () => {
   it("exists as a distinct voice state", async () => {
     const source = await fs.readFile(path.join(ROOT, "lib/useVoice.ts"), "utf8");
-    assert.match(source, /"idle" \| "listening" \| "hearing" \| "thinking" \| "speaking"/);
+    for (const state of [
+      "idle",
+      "listening",
+      "hearing",
+      "thinking",
+      "executing",
+      "speaking",
+      "completed",
+      "failed",
+      "outcome-uncertain",
+    ]) {
+      assert.match(source, new RegExp(`\\| "${state}"`), `${state} is missing`);
+    }
   });
 
   it("is only ever entered from listening", async () => {
@@ -361,10 +433,33 @@ describe("hearing is a measured state, not an inferred one", () => {
     assert.equal(enters.length, 1, "hearing is entered from more than one place");
   });
 
-  it("mutes the analyser for the whole time synthesis is playing", async () => {
+  it("requires a recognized command instead of interrupting on any sound", async () => {
     const source = await fs.readFile(path.join(ROOT, "lib/useVoice.ts"), "utf8");
-    assert.match(source, /utterance\.onstart = \(\) => \{\s*setDeaf\(true\);/);
-    // Unmuting mid-queue would let the tail of one sentence be measured.
-    assert.match(source, /if \(pendingRef\.current === 0\) setDeaf\(false\);/);
+    assert.match(source, /isSpokenInterrupt\(`\$\{pending\} \$\{finalText\}`\)/);
+    assert.doesNotMatch(source, /levels\.volume > 0\.08/);
+    assert.doesNotMatch(source, /bargeFramesRef/);
+    assert.doesNotMatch(source, /utterance\.onstart = \(\) => \{\s*setDeaf\(true\);/);
+  });
+
+  it("interrupts both browser speech and the active model stream", async () => {
+    const hook = await fs.readFile(path.join(ROOT, "lib/useVoice.ts"), "utf8");
+    const page = await fs.readFile(path.join(ROOT, "app/page.tsx"), "utf8");
+    assert.match(hook, /window\.speechSynthesis\?\.cancel\(\)/);
+    assert.match(hook, /onInterruptRef\.current\?\.\(\)/);
+    assert.match(page, /activeRequestRef\.current\?\.abort\(\)/);
+    assert.match(page, /signal: controller\.signal/);
+  });
+
+  it("quarantines playback transcription while still hearing stop commands", async () => {
+    const source = await fs.readFile(path.join(ROOT, "lib/useVoice.ts"), "utf8");
+    assert.match(source, /if \(speechOwnsFloorRef\.current\) \{/);
+    assert.match(source, /isSpokenInterrupt/);
+    assert.doesNotMatch(source, /recognitionRef\.current\?\.abort\(\)/);
+  });
+
+  it("does not hide a syllable behind two heavy smoothing filters", async () => {
+    const source = await fs.readFile(path.join(ROOT, "lib/audio.ts"), "utf8");
+    assert.match(source, /smoothingTimeConstant = 0\.45/);
+    assert.match(source, /volume: 0\.24/);
   });
 });

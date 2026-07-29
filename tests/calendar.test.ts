@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { greeting, hoursLeftToday, localHour } from "../lib/ambient";
+import {
+  greeting,
+  hoursLeftToday,
+  localContext,
+  localHour,
+  requestsLocalContext,
+} from "../lib/ambient";
 import { bookedHoursIn, toBusy, type Busy } from "../lib/calendar";
 
 /**
@@ -107,6 +113,25 @@ describe("toBusy", () => {
 });
 
 describe("localHour", () => {
+  it("renders a canonical operator location and timezone snapshot", () => {
+    const previousZone = process.env.MORPHEUS_TZ;
+    const previousCity = process.env.MORPHEUS_CITY;
+    try {
+      process.env.MORPHEUS_TZ = "Asia/Tbilisi";
+      process.env.MORPHEUS_CITY = "Tbilisi";
+      const context = localContext(Date.parse("2026-07-29T16:50:00Z"));
+      assert.equal(context.city, "Tbilisi");
+      assert.equal(context.timeZone, "Asia/Tbilisi");
+      assert.match(context.localDateTime, /20:50/);
+      assert.equal(requestsLocalContext("what timezone am I in"), true);
+    } finally {
+      if (previousZone === undefined) delete process.env.MORPHEUS_TZ;
+      else process.env.MORPHEUS_TZ = previousZone;
+      if (previousCity === undefined) delete process.env.MORPHEUS_CITY;
+      else process.env.MORPHEUS_CITY = previousCity;
+    }
+  });
+
   it("uses the operator's zone, not the host's", () => {
     const previous = process.env.MORPHEUS_TZ;
     try {
