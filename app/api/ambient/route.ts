@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AMBIENT } from "@/lib/ambient";
+import { AMBIENT, coordinates } from "@/lib/ambient";
 
 /**
  * Real weather.
@@ -13,7 +13,12 @@ import { AMBIENT } from "@/lib/ambient";
  */
 
 export const runtime = "nodejs";
-export const revalidate = 600;
+// The handler must run per request: `revalidate` here would statically
+// generate this route at build time, freezing whatever the environment looked
+// like during `npm run build` — which is how the operator's name came back
+// empty no matter what .env.local said. The weather call itself is still
+// cached, on the fetch below, which is where the caching belongs.
+export const dynamic = "force-dynamic";
 
 // WMO weather codes, condensed to what a HUD line needs.
 const CONDITIONS: Array<[number[], string]> = [
@@ -34,8 +39,10 @@ function describe(code: number): string {
 export async function GET() {
   // No coordinates configured means no weather. Better an absent readout than
   // an invented one.
-  if (!process.env.THOR_LAT || !process.env.THOR_LON) {
+  const where = coordinates();
+  if (!where) {
     return NextResponse.json({
+      operator: AMBIENT.operator,
       city: AMBIENT.city,
       temperature: 0,
       conditions: "",
@@ -45,8 +52,8 @@ export async function GET() {
   }
 
   const params = new URLSearchParams({
-    latitude: String(process.env.THOR_LAT),
-    longitude: String(process.env.THOR_LON),
+    latitude: where.lat,
+    longitude: where.lon,
     current: "temperature_2m,weather_code",
     timezone: "auto",
   });
@@ -65,6 +72,7 @@ export async function GET() {
     if (typeof temperature !== "number") throw new Error("no reading returned");
 
     return NextResponse.json({
+      operator: AMBIENT.operator,
       city: AMBIENT.city,
       temperature: Math.round(temperature),
       conditions: describe(data.current?.weather_code ?? 1),
@@ -73,6 +81,7 @@ export async function GET() {
   } catch (error) {
     console.error("ambient: weather unavailable", error);
     return NextResponse.json({
+      operator: AMBIENT.operator,
       city: AMBIENT.city,
       temperature: 0,
       conditions: "",

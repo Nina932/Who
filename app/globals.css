@@ -11,20 +11,25 @@
  */
 
 @theme {
-  --color-void: #04070a;
-  --color-hull: #080d13;
-  --color-plate: #0c141c;
+  /* Pulled from the NYX Core mark: a navy field, not a black one. */
+  --color-void: #060b16;
+  --color-hull: #0a1322;
+  --color-plate: #0e1a2c;
 
-  --color-signal: #3fe0f0;
-  --color-signal-dim: #1c8d9c;
-  --color-signal-deep: #0d3f49;
+  /* Chrome, for anything that should read as machined rather than lit. */
+  --color-chrome: #9fb4c9;
+  --color-chrome-dim: #4a5f75;
+
+  --color-signal: #3ec2ff;
+  --color-signal-dim: #1f6f9c;
+  --color-signal-deep: #0d2c49;
 
   /* The reference photo is not one blue — it runs deep indigo through teal to
      a hot white core. These are the stops that gradient moves between. */
-  --color-abyss: #1b2a6b;
-  --color-violet: #6b4ce0;
-  --color-aqua: #22d3ee;
-  --color-ice: #b9fbff;
+  --color-abyss: #10306b;
+  --color-violet: #4a6fe0;
+  --color-aqua: #1aa8ff;
+  --color-ice: #b9ecff;
 
   --color-attend: #f2c14e;
   --color-attend-dim: #8a6c22;
@@ -69,9 +74,9 @@ body {
    the background never resolves into a static gradient. */
 .field-vignette {
   background:
-    radial-gradient(90% 70% at 30% 20%, rgba(107, 76, 224, 0.13), transparent 60%),
-    radial-gradient(80% 60% at 75% 70%, rgba(34, 211, 238, 0.11), transparent 62%),
-    radial-gradient(120% 90% at 50% 110%, rgba(27, 42, 107, 0.35), transparent 70%),
+    radial-gradient(90% 70% at 30% 20%, rgba(74, 111, 224, 0.14), transparent 60%),
+    radial-gradient(80% 60% at 75% 70%, rgba(26, 168, 255, 0.12), transparent 62%),
+    radial-gradient(120% 90% at 50% 110%, rgba(16, 48, 107, 0.4), transparent 70%),
     var(--color-void);
   background-size: 200% 200%, 200% 200%, 200% 200%, auto;
   animation: field-drift 48s ease-in-out infinite alternate;
@@ -94,8 +99,8 @@ body {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(63, 224, 240, 0.35) 12%,
-    rgba(63, 224, 240, 0.35) 88%,
+    rgba(62, 194, 255, 0.35) 12%,
+    rgba(62, 194, 255, 0.35) 88%,
     transparent
   );
   height: 1px;
@@ -163,12 +168,12 @@ body {
 }
 
 .chip {
-  border: 1px solid rgba(63, 224, 240, 0.28);
-  background: rgba(63, 224, 240, 0.06);
+  border: 1px solid rgba(62, 194, 255, 0.28);
+  background: rgba(62, 194, 255, 0.06);
   border-radius: 999px;
   box-shadow:
-    inset 0 0 12px rgba(63, 224, 240, 0.08),
-    0 0 12px rgba(63, 224, 240, 0.06);
+    inset 0 0 12px rgba(62, 194, 255, 0.08),
+    0 0 12px rgba(62, 194, 255, 0.06);
 }
 
 .chip-attend {
@@ -180,7 +185,7 @@ body {
 }
 
 .panel {
-  border: 1px solid rgba(63, 224, 240, 0.14);
+  border: 1px solid rgba(62, 194, 255, 0.14);
   background: linear-gradient(
     180deg,
     rgba(12, 20, 28, 0.92),
@@ -190,7 +195,7 @@ body {
 }
 
 .glow-text {
-  filter: drop-shadow(0 0 22px rgba(63, 224, 240, 0.35));
+  filter: drop-shadow(0 0 22px rgba(62, 194, 255, 0.35));
 }
 
 /* The scan line that crowns the whole cockpit. */
@@ -244,7 +249,7 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(63, 224, 240, 0.16);
+  background: rgba(62, 194, 255, 0.16);
   border-radius: 999px;
 }
 

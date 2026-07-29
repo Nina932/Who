@@ -8,8 +8,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import NyxCoreMark from "@/components/brand/NyxCoreMark";
 import {
-  AMBIENT,
   formatClock,
   formatDate,
   greetingLine,
@@ -60,24 +60,25 @@ export interface HudHeaderProps {
   local: boolean;
 }
 
-interface Weather {
+interface Ambient {
+  operator: string;
+  city: string;
   temperature: number;
   conditions: string;
-  city: string;
   live: boolean;
 }
 
 export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeaderProps) {
-  // Weather was a hardcoded constant presented as a live reading. It is now
-  // fetched; if the fetch fails the reading is dimmed rather than faked.
-  const [weather, setWeather] = useState<Weather | null>(null);
+  // Fetched at runtime rather than inlined at build time, so changing your
+  // name or city in .env.local takes effect on the next page load.
+  const [ambient, setAmbient] = useState<Ambient | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/ambient")
       .then((r) => r.json())
-      .then((data: Weather) => {
-        if (!cancelled) setWeather(data);
+      .then((data: Ambient) => {
+        if (!cancelled) setAmbient(data);
       })
       .catch(() => undefined);
     return () => {
@@ -111,26 +112,32 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
       </div>
 
       <div className="flex items-start justify-between gap-8">
-        {/* Time */}
-        <div className="min-w-[190px]">
-          <div
-            className="aurora glow-text tabular-nums"
-            style={{
-              fontSize: 56,
-              fontWeight: 200,
-              lineHeight: 1,
-              letterSpacing: "0.02em",
-              fontFamily: "var(--font-display)",
-            }}
-          >
-            {now ? formatClock(now) : "--:--"}
+        {/* Brand + time */}
+        <div className="flex min-w-[190px] items-start gap-4">
+          <NyxCoreMark size={46} className="mt-1 shrink-0" />
+          <div>
+            <div
+              className="aurora glow-text tabular-nums"
+              style={{
+                fontSize: 56,
+                fontWeight: 200,
+                lineHeight: 1,
+                letterSpacing: "0.02em",
+                fontFamily: "var(--font-display)",
+              }}
+            >
+              {now ? formatClock(now) : "--:--"}
+            </div>
+            <div className="label mt-2">{now ? formatDate(now) : " "}</div>
+            <div className="label mt-2" style={{ color: "var(--color-chrome-dim)" }}>
+              NYX Core
+            </div>
           </div>
-          <div className="label mt-2">{now ? formatDate(now) : " "}</div>
         </div>
 
         {/* Weather — omitted entirely when there is no live reading, rather
             than showing a hardcoded number dressed up as a measurement. */}
-        {weather?.live ? (
+        {ambient?.live ? (
           <div className="hidden min-w-[210px] sm:block">
             <div
               className="font-light"
@@ -141,10 +148,10 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
                 fontFamily: "var(--font-display)",
               }}
             >
-              {weather.temperature}°C
+              {ambient.temperature}°C
             </div>
             <div className="label mt-2">
-              {[weather.city, weather.conditions].filter(Boolean).join(" · ")}
+              {[ambient.city, ambient.conditions].filter(Boolean).join(" · ")}
             </div>
           </div>
         ) : null}
@@ -161,7 +168,7 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               fontFamily: "var(--font-display)",
             }}
           >
-            {now ? greetingLine(now.getHours(), AMBIENT.operator) : "Standing by"}
+            {now ? greetingLine(now.getHours(), ambient?.operator ?? "") : "Standing by"}
           </div>
 
           <nav className="pointer-events-auto mt-4 flex items-center justify-end gap-2">

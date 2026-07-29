@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import NyxCoreMark from "@/components/brand/NyxCoreMark";
 import AgentInspector from "@/components/AgentInspector";
 import CommandDock from "@/components/CommandDock";
 import dynamic from "next/dynamic";
@@ -29,8 +30,11 @@ import { useVoice } from "@/lib/useVoice";
 const CockpitScene = dynamic(() => import("@/components/thor/CockpitScene"), {
   ssr: false,
   loading: () => (
-    <div className="absolute inset-0 grid place-items-center">
-      <span className="label-lit pulse-soft">Waking the core…</span>
+    <div className="absolute inset-0 grid place-items-center gap-5">
+      <div className="flex flex-col items-center gap-5">
+        <NyxCoreMark size={104} />
+        <span className="label-lit pulse-soft">Waking the core…</span>
+      </div>
     </div>
   ),
 });

@@ -25,20 +25,45 @@ export interface AmbientConfig {
  *
  * Set in `.env.local`:
  *
- *   NEXT_PUBLIC_THOR_OPERATOR=Nina
- *   NEXT_PUBLIC_THOR_CITY=Tbilisi
+ *   THOR_OPERATOR=Nina
+ *   THOR_CITY=Tbilisi
  *   THOR_LAT=41.7151
  *   THOR_LON=44.8271
  *
- * NEXT_PUBLIC_ is required on the first two because the header renders them in
- * the browser.
+ * Read on the server and delivered through /api/ambient rather than inlined
+ * with a NEXT_PUBLIC_ prefix, so changing your name takes effect on the next
+ * page load rather than the next build.
+ *
+ * Two things have to hold for this to be a real runtime lookup, and both were
+ * got wrong at first:
+ *
+ *  - the route serving it must be `dynamic = "force-dynamic"`. With
+ *    `revalidate` it is statically generated at build time and serves whatever
+ *    the environment held during `npm run build`, which is nothing.
+ *  - the read goes through a variable key. Bundlers can replace a literal
+ *    `process.env.FOO`; they cannot replace `process.env[name]`.
  */
+function env(name: string): string {
+  return process.env[name] ?? "";
+}
+
 export const AMBIENT: AmbientConfig = {
-  operator: process.env.NEXT_PUBLIC_THOR_OPERATOR ?? "",
-  city: process.env.NEXT_PUBLIC_THOR_CITY ?? "",
+  get operator() {
+    return env("THOR_OPERATOR");
+  },
+  get city() {
+    return env("THOR_CITY");
+  },
   temperature: 0,
   conditions: "",
 };
+
+/** Coordinates for the weather readout, or null when unset. */
+export function coordinates(): { lat: string; lon: string } | null {
+  const lat = env("THOR_LAT");
+  const lon = env("THOR_LON");
+  return lat && lon ? { lat, lon } : null;
+}
 
 export function greeting(hour: number): string {
   if (hour < 5) return "Still up";

@@ -2,13 +2,14 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Thor — autonomous AI co-founder",
+  title: "Thor — NYX Core",
   description:
-    "A voice-first cockpit for a workforce of specialist agents that learns, runs, and scales a solo business.",
+    "A voice-first cockpit for a workforce of specialist agents that learns, runs, and scales a solo business. Built by NYX Core.",
+  applicationName: "Thor",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#04070a",
+  themeColor: "#060b16",
 };
 
 export default function RootLayout({
