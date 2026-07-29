@@ -1,0 +1,40 @@
+{
+  "name": "morpheus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Morpheus — an autonomous AI co-founder cockpit for solo operators.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:watch": "node --import tsx --test --watch tests/*.test.ts",
+    "verify:models": "node --import tsx scripts/verify-models.ts",
+    "probe:speech": "node --import tsx scripts/probe-speech.ts",
+    "telegram:bot": "node --import tsx scripts/telegram-bot.ts"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@react-three/postprocessing": "^3.0.4",
+    "hls.js": "^1.6.16",
+    "next": "15.5.22",
+    "postprocessing": "^6.39.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "text2wav": "^0.0.14",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.13",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.1",
+    "@types/react-dom": "^19.1.1",
+    "tailwindcss": "4.1.13",
+    "tsx": "^4.23.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="32" height="32">
+  <!--
+    Favicon build of the NYX Core mark: no animation, no chrome struts, and a
+    heavier neon stroke. At 16px the ring detail collapses into grey mud, so
+    only the lit core survives — which is the part that is recognisable anyway.
+  -->
+  <defs>
+    <radialGradient id="s" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#e8f4ff"/>
+      <stop offset="35%" stop-color="#8aa2b8"/>
+      <stop offset="100%" stop-color="#0d1622"/>
+    </radialGradient>
+    <linearGradient id="n" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7ff0ff"/>
+      <stop offset="50%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#1aa8ff"/>
+    </linearGradient>
+    <filter id="g" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="200" height="200" rx="44" fill="#070d18"/>
+  <circle cx="100" cy="100" r="70" fill="#1aa8ff" opacity="0.12"/>
+
+  <circle cx="175.3" cy="120.2" r="9" fill="url(#s)"/>
+  <circle cx="124.8" cy="175.3" r="9" fill="url(#s)"/>
+  <circle cx="55.2" cy="155.4" r="9" fill="url(#s)"/>
+  <circle cx="24.7" cy="79.8" r="9" fill="url(#s)"/>
+  <circle cx="75.2" cy="24.7" r="9" fill="url(#s)"/>
+  <circle cx="144.8" cy="44.6" r="9" fill="url(#s)"/>
+
+  <polygon points="146.00,100.00 123.00,139.83 77.00,139.83 54.00,100.00 77.00,60.17 123.00,60.17"
+           fill="none" stroke="url(#n)" stroke-width="11" stroke-linejoin="round" filter="url(#g)"/>
+</svg>

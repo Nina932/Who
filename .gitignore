@@ -15,4 +15,9 @@ yarn-error.log*
 
 next-env.d.ts
 *.tsbuildinfo
-.thor/
+.morpheus/
+
+# Local runtime output. These may contain request or connector diagnostics and
+# are never part of the application source.
+.dev-server.*.log
+.telegram-worker.*.log
