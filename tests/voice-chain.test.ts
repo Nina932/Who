@@ -317,12 +317,18 @@ describe("wav round-tripping", () => {
 
 describe("the speech probe", () => {
   it("names the terms refusal rather than reporting a generic failure", async () => {
-    const source = await readFile(new URL("../scripts/probe-speech.ts", import.meta.url), "utf8");
-    assert.match(source, /model_terms_required/);
-    assert.match(source, /GROQ_API_KEY/);
-    // The probe must report what the provider actually said, not assume.
-    assert.match(source, /response\.ok/);
-    assert.doesNotMatch(source, /NEXT_PUBLIC_GROQ/);
+    const provider = await readFile(
+      new URL("../lib/speech-provider.ts", import.meta.url),
+      "utf8",
+    );
+    assert.match(provider, /model_terms_required/);
+
+    const probe = await readFile(new URL("../scripts/probe-speech.ts", import.meta.url), "utf8");
+    // The probe drives the same provider chain the cockpit uses, so a pass
+    // here means the cockpit works rather than that the script works.
+    assert.match(probe, /synthesizeSpeech\(/);
+    assert.match(probe, /GROQ_API_KEY/);
+    assert.doesNotMatch(probe, /NEXT_PUBLIC_GROQ/);
   });
 
   it("reports a fallback to the operator instead of failing silently", async () => {

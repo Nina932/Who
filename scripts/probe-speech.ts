@@ -24,6 +24,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { speechCandidates, synthesizeSpeech } from "../lib/speech-provider";
 import { MECHANICAL } from "../lib/voice-chain";
 import { bandEnergy } from "../lib/voice-dsp";
 import { measure, renderMechanical, toMono, type VoiceMeasurement } from "../lib/voice-render";
@@ -127,58 +128,48 @@ const format = (measurement: VoiceMeasurement) =>
 async function main(): Promise<number> {
   await loadLocalEnvironment();
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    console.error("GROQ_API_KEY is not set. Put it in .env.local or export it, then run again.");
+  const candidates = speechCandidates();
+  if (candidates.length === 0) {
+    console.error(
+      "No speech provider is configured. Set GROQ_API_KEY or GOOGLE_API_KEY in\n" +
+        ".env.local, then run again.",
+    );
     return 2;
   }
 
   const text = process.argv.slice(2).join(" ").trim() || DEFAULT_LINE;
-  const model = process.env.MORPHEUS_TTS_MODEL ?? "canopylabs/orpheus-v1-english";
-  const voice = process.env.MORPHEUS_TTS_VOICE ?? "troy";
-  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 1.1);
+  console.log(
+    `Asking for speech, in order: ${candidates.map((entry) => entry.id).join(" then ")}.\n` +
+      `  text  "${text}"\n`,
+  );
 
-  console.log(`Asking Groq for speech.\n  model ${model}\n  voice ${voice}\n  text  "${text}"\n`);
+  // The same call the cockpit makes, so a pass here means the cockpit works
+  // rather than meaning this script works.
+  const outcome = await synthesizeSpeech(text);
 
-  const response = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model,
-      voice,
-      input: `[menacing] [deliberately] ${text}`,
-      response_format: "wav",
-      sample_rate: 48_000,
-      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 1.1,
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    // The one failure worth naming precisely: everything else is a key or a
-    // typo, but this one looks identical from the cockpit and is fixed in a
-    // browser rather than in the code.
-    if (/model_terms_required|terms/i.test(detail)) {
+  for (const failure of outcome.failures) {
+    console.error(`${failure.provider} did not answer: ${failure.reason}`);
+    if (/terms/i.test(failure.reason)) {
       console.error(
-        `Groq has not accepted the terms for ${model}.\n\n` +
-          `Terms are accepted per *organization*, not per user, and only an admin\n` +
+        `\nTerms are accepted per *organization*, not per user, and only an admin\n` +
           `of that organization can accept them. If you have already clicked\n` +
           `accept, the usual cause is that it happened on a different org than\n` +
           `the one this GROQ_API_KEY belongs to — check the org switcher at the\n` +
-          `top left of the console against Settings > API Keys.\n\n` +
-          `  ${TERMS_URL}\n\n${detail.slice(0, 600)}\n`,
+          `top left of the console against Settings > API Keys.\n\n  ${TERMS_URL}\n`,
       );
-      // A dead end is not useful on its own. What this org *can* reach right
-      // now is, because any of these can be dropped straight into
-      // MORPHEUS_TTS_MODEL without waiting on an admin.
-      await reportSpeechModels(apiKey);
-      return 3;
     }
-    console.error(`Groq refused with HTTP ${response.status}.\n\n${detail.slice(0, 600)}`);
-    return 1;
+    if (failure.detail) console.error(`${failure.detail}\n`);
   }
 
-  const raw = new Uint8Array(await response.arrayBuffer());
+  if (!outcome.ok) {
+    // A dead end is not useful on its own. What the org *can* reach is,
+    // because any of it can be dropped straight into MORPHEUS_TTS_MODEL.
+    const groqKey = process.env.GROQ_API_KEY;
+    if (groqKey) await reportSpeechModels(groqKey);
+    return 3;
+  }
+
+  const raw = outcome.audio.wav;
   const decoded = decodeWav(raw);
   const mono = toMono(decoded.channels);
   const processed = renderMechanical(mono, decoded.sampleRate);
@@ -196,7 +187,11 @@ async function main(): Promise<number> {
   const before = measure(mono, decoded.sampleRate);
   const after = measure(processed, decoded.sampleRate);
 
-  console.log(`Groq returned ${raw.byteLength} bytes at ${decoded.sampleRate}Hz.\n`);
+  console.log(
+    `${outcome.audio.provider} answered with ${raw.byteLength} bytes at ` +
+      `${decoded.sampleRate}Hz.\n  model ${outcome.audio.model}\n` +
+      `  voice ${outcome.audio.voice}\n`,
+  );
   console.log("  as provided\n" + format(before) + "\n");
   console.log("  through the mechanical chain\n" + format(after) + "\n");
   // The band a sub-octave layer lands in for any adult male voice. If this

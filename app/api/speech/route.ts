@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { guardMutation } from "@/lib/guard";
+import { MAX_TEXT, speechCandidates, synthesizeSpeech } from "@/lib/speech-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const ENDPOINT = "https://api.groq.com/openai/v1/audio/speech";
-const DIRECTIONS = "[menacing] [deliberately]";
-const MAX_TEXT = 165;
 
 interface SpeechBody {
   text?: unknown;
@@ -17,10 +14,9 @@ export async function POST(request: Request) {
   const blocked = guardMutation(request);
   if (blocked) return blocked.response;
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
+  if (speechCandidates().length === 0) {
     return NextResponse.json(
-      { error: "Groq speech is not configured." },
+      { error: "No speech provider is configured. Set GROQ_API_KEY or GOOGLE_API_KEY." },
       { status: 503 },
     );
   }
@@ -40,42 +36,33 @@ export async function POST(request: Request) {
     );
   }
 
-  // The mechanical chain detunes the returned buffer, and a detuned buffer
-  // plays *longer* — about twelve percent at the current setting. Asking the
-  // provider for slightly quicker delivery lands the processed result at a
-  // deliberate pace rather than a dragging one. See `lib/voice-chain.ts`.
-  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 1.1);
-  const upstream = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model:
-        process.env.MORPHEUS_TTS_MODEL ??
-        "canopylabs/orpheus-v1-english",
-      voice: process.env.MORPHEUS_TTS_VOICE ?? "troy",
-      input: `${DIRECTIONS} ${text}`,
-      response_format: "wav",
-      sample_rate: 48_000,
-      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 1.1,
-    }),
-    cache: "no-store",
-  });
+  const outcome = await synthesizeSpeech(text);
 
-  if (!upstream.ok) {
-    const detail = (await upstream.text()).slice(0, 400);
+  if (!outcome.ok) {
+    const [first] = outcome.failures;
     return NextResponse.json(
-      { error: "Groq speech was unavailable.", detail },
-      { status: upstream.status },
+      {
+        error: "Speech was unavailable.",
+        // The reason belongs in the response because the browser fallback is
+        // otherwise indistinguishable from the provider working badly.
+        detail: outcome.failures.map((failure) => failure.reason).join(" "),
+        upstream: first?.detail,
+      },
+      { status: first?.status && first.status >= 400 ? first.status : 502 },
     );
   }
 
-  return new NextResponse(await upstream.arrayBuffer(), {
-    headers: {
-      "content-type": upstream.headers.get("content-type") ?? "audio/wav",
-      "cache-control": "no-store",
-    },
+  const headers = new Headers({
+    "content-type": "audio/wav",
+    "cache-control": "no-store",
+    "x-voice-provider": outcome.audio.provider,
+    "x-voice-model": outcome.audio.model,
   });
+  // A provider answered, but not the first choice. The cockpit shows this so a
+  // substituted voice is never mistaken for the intended one.
+  if (outcome.failures.length > 0) {
+    headers.set("x-voice-fallback-reason", outcome.failures[0].reason);
+  }
+
+  return new NextResponse(outcome.audio.wav as unknown as BodyInit, { headers });
 }

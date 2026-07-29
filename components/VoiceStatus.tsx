@@ -43,6 +43,20 @@ export default function VoiceStatus({
   voicePath,
   onInterrupt,
 }: VoiceStatusProps) {
+  /**
+   * Silence is only correct when the intended voice is the one speaking.
+   * Anything else — a different provider, or the operating system's own
+   * narrator, which cannot carry the mechanical processing at all — is
+   * something the operator should be able to see rather than have to infer
+   * from how the audio sounds.
+   */
+  const voiceNote =
+    voicePath.engine === "browser"
+      ? `Local voice · ${voicePath.reason}`
+      : voicePath.fallbackReason
+        ? `${voicePath.service} voice · ${voicePath.fallbackReason}`
+        : null;
+
   const status =
     state === "listening" && !micLive
       ? { text: "Allow microphone to react", tone: "uncertain" as const }
@@ -86,14 +100,15 @@ export default function VoiceStatus({
         </span>
       </button>
 
-      {/* A fallback used to be silent, which read as the voice work never
-          having landed. If the local engine is speaking, it says so. */}
-      {voicePath.engine === "browser" ? (
+      {/* A substitution used to be silent, which read as the voice work never
+          having landed. Whatever is actually speaking now says so, and says
+          why the intended voice was not available. */}
+      {voiceNote ? (
         <div
           className="rise-in max-w-[520px] px-4 text-center text-[11px] uppercase tracking-[0.12em]"
           style={{ color: "#d48cff" }}
         >
-          Local voice · {voicePath.reason}
+          {voiceNote}
         </div>
       ) : null}
 

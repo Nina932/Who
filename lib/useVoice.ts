@@ -72,10 +72,16 @@ export type OutcomeState = Extract<
  * it can be shown rather than guessed at.
  */
 export type VoicePath =
-  | { engine: "provider" }
+  | {
+      engine: "provider";
+      /** Which service actually spoke — "groq", "gemini". */
+      service: string;
+      /** Set when the intended provider was refused and another answered. */
+      fallbackReason?: string;
+    }
   | { engine: "browser"; reason: string };
 
-const PROVIDER_PATH: VoicePath = { engine: "provider" };
+const PROVIDER_PATH: VoicePath = { engine: "provider", service: "provider" };
 
 /**
  * Turn a refused speech request into something worth reading.
@@ -678,6 +684,7 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
 
       const abort = new AbortController();
       ttsAbortRef.current = abort;
+      let spokenBy: VoicePath = PROVIDER_PATH;
       try {
         const AudioContextCtor = window.AudioContext;
         const context =
@@ -696,6 +703,14 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
             signal: abort.signal,
           });
           if (!response.ok) throw new Error(await speechFailureReason(response));
+          // Recorded per chunk rather than once at the end: if the primary
+          // provider fails partway through an answer, the substitution is
+          // already visible instead of being reported after playback.
+          spokenBy = {
+            engine: "provider",
+            service: response.headers.get("x-voice-provider") ?? "provider",
+            fallbackReason: response.headers.get("x-voice-fallback-reason") ?? undefined,
+          };
 
           const buffer = await context.decodeAudioData(
             await response.arrayBuffer(),
@@ -722,7 +737,7 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
             }
           });
         }
-        setVoicePath(PROVIDER_PATH);
+        setVoicePath(spokenBy);
         settle(false);
       } catch (error) {
         if (

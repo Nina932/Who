@@ -79,6 +79,59 @@ export function decodeWav(bytes: Uint8Array): Pcm {
   return { sampleRate, channels };
 }
 
+/**
+ * Wrap raw little-endian 16-bit PCM in a WAV header, sample-for-sample.
+ *
+ * Some providers return bare PCM with no container — Gemini's speech models
+ * describe the encoding in a MIME type and hand back nothing else. A browser
+ * cannot decode that: `decodeAudioData` needs a container to know the rate and
+ * width. Going through float and re-quantising would work and would also throw
+ * away a bit of precision for no reason, so the samples are copied untouched
+ * and only a header is prepended.
+ */
+export function wavFromPcm16(
+  pcm: Uint8Array,
+  sampleRate: number,
+  channelCount = 1,
+): Uint8Array {
+  // An odd trailing byte is half a sample and cannot be played.
+  const usable = pcm.byteLength - (pcm.byteLength % (2 * channelCount));
+  const bytes = new Uint8Array(44 + usable);
+  const view = new DataView(bytes.buffer);
+
+  const tag = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+
+  tag(0, "RIFF");
+  view.setUint32(4, 36 + usable, true);
+  tag(8, "WAVE");
+  tag(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channelCount, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channelCount * 2, true);
+  view.setUint16(32, channelCount * 2, true);
+  view.setUint16(34, 16, true);
+  tag(36, "data");
+  view.setUint32(40, usable, true);
+  bytes.set(pcm.subarray(0, usable), 44);
+
+  return bytes;
+}
+
+/**
+ * Read the sample rate out of a MIME type like
+ * `audio/L16;codec=pcm;rate=24000`, which is how the rate is communicated when
+ * the audio itself carries no header.
+ */
+export function sampleRateFromMimeType(mimeType: string, fallback = 24_000): number {
+  const match = /rate=(\d+)/i.exec(mimeType);
+  const rate = match ? Number(match[1]) : NaN;
+  return Number.isFinite(rate) && rate > 0 ? rate : fallback;
+}
+
 /** Write 16-bit PCM, the format every player on every platform opens. */
 export function encodeWav(pcm: Pcm): Uint8Array {
   const channelCount = pcm.channels.length;
