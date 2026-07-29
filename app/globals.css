@@ -247,6 +247,139 @@ body {
   animation: rise-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 
+/* ── Constellation labels ─────────────────────────────────────────────────
+ *
+ * Rendered at a constant screen size rather than scaled with depth, so every
+ * seat stays readable however far back it sits. Styled here rather than
+ * inline because these are DOM nodes inside the WebGL scene and there is one
+ * per agent — inline objects would allocate on every render.
+ */
+
+.node-label {
+  white-space: nowrap;
+  transform: translateY(-30px);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(212 240 250);
+  text-shadow:
+    0 0 12px rgba(62, 194, 255, 0.5),
+    0 1px 3px rgba(0, 0, 0, 0.9);
+  transition: color 200ms ease;
+}
+
+.node-label-below {
+  /* Integration seats label downward, so the two families do not crowd the
+     same band of screen above the constellation. */
+  transform: translateY(28px);
+  font-size: 9px;
+  opacity: 0.72;
+}
+
+.node-label-primary {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: rgb(255 236 186);
+  text-shadow:
+    0 0 16px rgba(242, 193, 78, 0.85),
+    0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Microphone level ─────────────────────────────────────────────────────
+ *
+ * `--voice-level`, `--voice-bass`, `--voice-mids` and `--voice-treble` are
+ * written to the document element by `lib/useVoice.ts`, from real analyser
+ * readings. Nothing here animates on a timer: if these do not move, the
+ * microphone is not being heard, and the interface should say so by staying
+ * still rather than by pretending.
+ */
+
+.mic-button {
+  color: var(--color-signal);
+  border: 1px solid rgba(62, 194, 255, 0.35);
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(62, 194, 255, 0.22),
+    rgba(6, 18, 30, 0.85) 70%
+  );
+  box-shadow:
+    inset 0 0 18px rgba(62, 194, 255, 0.2),
+    0 0 20px rgba(62, 194, 255, 0.18);
+}
+
+.mic-button-live {
+  color: var(--color-attend);
+  border-color: rgba(242, 193, 78, 0.55);
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(242, 193, 78, 0.28),
+    rgba(20, 14, 4, 0.85) 70%
+  );
+  box-shadow:
+    inset 0 0 22px rgba(242, 193, 78, 0.3),
+    /* The outer glow tracks the measured level, so the button itself is a
+       meter and not only a switch. */
+      0 0 calc(18px + var(--voice-level, 0) * 46px) rgba(242, 193, 78, 0.45);
+}
+
+.voice-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+  border: 1px solid var(--color-attend);
+  pointer-events: none;
+  transform: scale(calc(1 + var(--voice-level, 0) * 0.55));
+  opacity: calc(0.12 + var(--voice-level, 0) * 1.1);
+}
+
+.voice-ring-outer {
+  inset: -13px;
+  border-color: rgba(242, 193, 78, 0.5);
+  transform: scale(calc(1 + var(--voice-level, 0) * 0.85));
+  opacity: calc(0.06 + var(--voice-level, 0) * 0.7);
+}
+
+.voice-bars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 26px;
+  min-width: 0;
+}
+
+.voice-bar {
+  flex: 1 1 2px;
+  max-width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    var(--color-signal),
+    rgba(122, 108, 240, 0.9)
+  );
+  transform: scaleY(calc(0.06 + var(--band, 0) * 1.9));
+  opacity: calc(0.28 + var(--band, 0) * 1.6);
+  /* Staggered by index so the field travels rather than pumping as one block. */
+  transition: transform calc(55ms + var(--i, 0) * 1.5ms) linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Damped, not removed. The bars are the only evidence the operator has that
+     the microphone is live, so they must keep answering. */
+  .voice-ring,
+  .voice-ring-outer {
+    transform: scale(calc(1 + var(--voice-level, 0) * 0.2));
+  }
+  .voice-bar {
+    transform: scaleY(calc(0.2 + var(--band, 0) * 0.6));
+    transition: none;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

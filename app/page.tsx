@@ -228,6 +228,7 @@ export default function Cockpit() {
           primaryId={attendance.primaryId}
           supportingIds={attendance.supportingIds}
           voiceState={voice.state}
+          levelsRef={voice.levelsRef}
           selectedId={selectedId}
           onSelect={setSelectedId}
         />
@@ -277,6 +278,8 @@ export default function Cockpit() {
         state={voice.state}
         listening={micOn}
         supported={voice.supported}
+        micLive={voice.micLive}
+        transcribing={voice.transcribing}
         onToggleListening={toggleListening}
         onSubmit={(text) => void ask(text)}
       />

@@ -13,6 +13,9 @@ import type { VoiceState } from "@/lib/useVoice";
 const COPY: Record<VoiceState, { text: string; tone: "signal" | "attend" | "muted" }> = {
   idle: { text: "Standing by", tone: "muted" },
   listening: { text: "Listening", tone: "signal" },
+  // Measured, not inferred: this appears only while the microphone level is
+  // actually above the speech floor. See `lib/audio.ts`.
+  hearing: { text: "Hearing you", tone: "attend" },
   thinking: { text: "Thinking", tone: "signal" },
   speaking: { text: "Speaking · tap to stop", tone: "attend" },
 };
