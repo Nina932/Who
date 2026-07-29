@@ -12,7 +12,7 @@ export async function GET() {
       await buildDailyBriefing(onThisDay(now), now.getTime()),
       {
         headers: {
-          "cache-control": "private, max-age=60, stale-while-revalidate=240",
+          "cache-control": "no-store",
         },
       },
     );

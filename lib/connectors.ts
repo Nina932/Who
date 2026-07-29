@@ -640,10 +640,35 @@ export interface CalendarEvent {
   end?: { dateTime?: string; date?: string };
 }
 
+/**
+ * Google may return an event that overlaps `timeMin` even though its start is
+ * already behind the clock. The cockpit says "upcoming", so timed events must
+ * be filtered by their actual start rather than trusted by array position.
+ * All-day events remain visible for their active calendar day.
+ */
+export function upcomingCalendarEvents(
+  events: CalendarEvent[],
+  now = Date.now(),
+): CalendarEvent[] {
+  return events
+    .filter((event) => {
+      const startsAt = event.start?.dateTime;
+      if (!startsAt) return Boolean(event.start?.date);
+      const start = Date.parse(startsAt);
+      return Number.isFinite(start) && start >= now;
+    })
+    .sort((left, right) => {
+      const leftStart = Date.parse(left.start?.dateTime ?? left.start?.date ?? "");
+      const rightStart = Date.parse(right.start?.dateTime ?? right.start?.date ?? "");
+      return leftStart - rightStart;
+    });
+}
+
 export async function listCalendarEvents(days = 7): Promise<CallOutcome<CalendarEvent[]>> {
+  const now = Date.now();
   const params = new URLSearchParams({
-    timeMin: new Date().toISOString(),
-    timeMax: new Date(Date.now() + days * 86_400_000).toISOString(),
+    timeMin: new Date(now).toISOString(),
+    timeMax: new Date(now + days * 86_400_000).toISOString(),
     singleEvents: "true",
     orderBy: "startTime",
     maxResults: "25",
@@ -653,7 +678,9 @@ export async function listCalendarEvents(days = 7): Promise<CallOutcome<Calendar
     "google-calendar",
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
   );
-  return result.ok ? { ok: true, data: result.data.items ?? [] } : result;
+  return result.ok
+    ? { ok: true, data: upcomingCalendarEvents(result.data.items ?? [], now) }
+    : result;
 }
 
 /**

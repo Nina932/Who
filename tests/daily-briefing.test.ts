@@ -17,6 +17,39 @@ const product: Product = {
 };
 
 describe("daily briefing", () => {
+  it("does not surface a meeting whose start time already passed", async () => {
+    const current = Date.parse("2026-07-29T20:50:00+04:00");
+    const result = await buildDailyBriefing("Today", current, {
+      calendar: async () => ({
+        ok: true,
+        data: [
+          {
+            summary: "Old Zoom meeting",
+            start: { dateTime: "2026-07-29T20:30:00+04:00" },
+          },
+        ],
+      }),
+      mail: async () => ({ ok: true, data: [] }),
+      news: async () => ({
+        fetchedAt: current,
+        headlines: [],
+        sources: [],
+      }),
+      products: async () => [],
+      operatorContext: async () => ({
+        description: "",
+        projectNotes: "",
+        updatedAt: null,
+      }),
+      memory: async () => [],
+    });
+
+    const calendar = result.lines.find((line) => line.id === "calendar");
+    assert.equal(calendar?.state, "empty");
+    assert.match(calendar?.text ?? "", /No events/);
+    assert.doesNotMatch(result.summary, /Old Zoom meeting/);
+  });
+
   it("assembles connected calendar, both mailboxes, live news and project truth", async () => {
     const result = await buildDailyBriefing("Historical fact.", now, {
       calendar: async () => ({

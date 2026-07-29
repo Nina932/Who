@@ -5,6 +5,7 @@ import {
   calendarAgendaReply,
   requestsCalendarAgenda,
 } from "../lib/calendar-intent";
+import { upcomingCalendarEvents } from "../lib/connectors";
 import type { Turn } from "../lib/orchestrator";
 
 describe("calendar conversation truth", () => {
@@ -41,5 +42,23 @@ describe("calendar conversation truth", () => {
     });
     assert.match(reply, /connected and responding/i);
     assert.match(reply, /Zoom meeting/);
+  });
+
+  it("does not call an already-started timed event upcoming", () => {
+    const events = upcomingCalendarEvents(
+      [
+        {
+          summary: "Already passed",
+          start: { dateTime: "2026-07-29T20:30:00+04:00" },
+        },
+        {
+          summary: "Still ahead",
+          start: { dateTime: "2026-07-29T21:30:00+04:00" },
+        },
+      ],
+      Date.parse("2026-07-29T20:50:00+04:00"),
+    );
+
+    assert.deepEqual(events.map((event) => event.summary), ["Still ahead"]);
   });
 });

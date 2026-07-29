@@ -2,6 +2,7 @@ import { allProducts } from "./assistant-store";
 import {
   listCalendarEvents,
   listRecentMail,
+  upcomingCalendarEvents,
   type CalendarEvent,
   type CallOutcome,
   type GmailConnectorId,
@@ -132,7 +133,10 @@ function relevance(text: string, terms: string[]): number {
   );
 }
 
-function calendarLine(outcome: CallOutcome<CalendarEvent[]>): DailyBriefingLine {
+function calendarLine(
+  outcome: CallOutcome<CalendarEvent[]>,
+  now: number,
+): DailyBriefingLine {
   if (!outcome.ok) {
     return {
       id: "calendar",
@@ -144,7 +148,8 @@ function calendarLine(outcome: CallOutcome<CalendarEvent[]>): DailyBriefingLine 
     };
   }
 
-  const next = outcome.data[0];
+  const futureEvents = upcomingCalendarEvents(outcome.data, now);
+  const next = futureEvents[0];
   if (!next) {
     return {
       id: "calendar",
@@ -162,7 +167,7 @@ function calendarLine(outcome: CallOutcome<CalendarEvent[]>): DailyBriefingLine 
         minute: "2-digit",
       }).format(new Date(startsAt))
     : "time not set";
-  const remainder = outcome.data.length - 1;
+  const remainder = futureEvents.length - 1;
 
   return {
     id: "calendar",
@@ -375,7 +380,7 @@ export async function buildDailyBriefing(
   const terms = workingTerms(products, operatorContext, facts);
   const rankedNews = newsLine(news, terms);
   const lines = [
-    calendarLine(calendar),
+    calendarLine(calendar, now),
     mailLine(personal, company, terms),
     rankedNews.line,
     projectLine(products, operatorContext, terms),
