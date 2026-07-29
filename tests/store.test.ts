@@ -1,0 +1,192 @@
+import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, before, describe, it } from "node:test";
+
+/**
+ * The store's one hard requirement: concurrent route handlers must not lose
+ * each other's writes. Next runs them in the same process, so a naive
+ * read-modify-write would drop updates under any real load.
+ */
+
+let tmp: string;
+let store: typeof import("../lib/store");
+
+before(async () => {
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "morpheus-store-"));
+  process.env.MORPHEUS_DATA_DIR = tmp;
+  store = await import("../lib/store");
+});
+
+after(async () => {
+  await fs.rm(tmp, { recursive: true, force: true });
+});
+
+describe("readCollection", () => {
+  it("returns the fallback when nothing has been written", async () => {
+    assert.deepEqual(await store.readCollection("missing", []), []);
+  });
+
+  it("returns the fallback rather than throwing on a corrupt file", async () => {
+    await fs.writeFile(path.join(tmp, "broken.json"), "{ not json", "utf8");
+    assert.deepEqual(await store.readCollection("broken", { ok: true }), { ok: true });
+  });
+});
+
+describe("mutate", () => {
+  it("serialises concurrent writers so none are lost", async () => {
+    // The bug this guards against: 50 interleaved read-modify-writes landing
+    // on top of each other and leaving a handful of entries.
+    const writes = Array.from({ length: 50 }, (_, i) =>
+      store.mutate<number[], number>("counter", [], (current) => ({
+        next: [...current, i],
+        result: i,
+      })),
+    );
+    await Promise.all(writes);
+
+    const final = await store.readCollection<number[]>("counter", []);
+    assert.equal(final.length, 50, `expected 50 entries, found ${final.length}`);
+    assert.deepEqual([...final].sort((a, b) => a - b), [...Array(50).keys()]);
+  });
+
+  it("keeps the chain alive after a mutator throws", async () => {
+    await assert.rejects(
+      store.mutate<number[], never>("chain", [], () => {
+        throw new Error("boom");
+      }),
+    );
+
+    // A rejected link must not deadlock every later write to that collection.
+    await store.mutate<number[], null>("chain", [], (current) => ({
+      next: [...current, 1],
+      result: null,
+    }));
+    assert.deepEqual(await store.readCollection<number[]>("chain", []), [1]);
+  });
+
+  it("passes the mutator's result back to the caller", async () => {
+    const result = await store.mutate<string[], string>("echo", [], () => ({
+      next: ["x"],
+      result: "returned",
+    }));
+    assert.equal(result, "returned");
+  });
+});
+
+describe("id", () => {
+  it("does not collide across a tight loop", () => {
+    const ids = new Set(Array.from({ length: 5000 }, () => store.id("t")));
+    assert.equal(ids.size, 5000);
+  });
+});
+
+describe("drivers", () => {
+  it("defaults to the filesystem when no Redis is configured", () => {
+    assert.equal(store.driverName(), "fs");
+  });
+
+  it("works against a swapped-in driver, so serverless has a real option", async () => {
+    // Proves the driver seam: nothing above this file knows which backend it
+    // is talking to. The Redis driver is the same shape.
+    const backing = new Map<string, string>();
+    store.setDriver({
+      name: "test-kv",
+      async read(collection) {
+        return backing.get(collection) ?? null;
+      },
+      async write(collection, serialised) {
+        backing.set(collection, serialised);
+      },
+      async remove(collection) {
+        backing.delete(collection);
+      },
+    });
+
+    assert.equal(store.driverName(), "test-kv");
+    await store.mutate<string[], null>("swapped", [], (current) => ({
+      next: [...current, "value"],
+      result: null,
+    }));
+    assert.deepEqual(await store.readCollection<string[]>("swapped", []), ["value"]);
+    assert.ok(backing.has("swapped"), "the swapped driver received the write");
+
+    await store.dropCollection("swapped");
+    assert.deepEqual(await store.readCollection<string[]>("swapped", []), []);
+  });
+});
+
+describe("compare-and-set", () => {
+  it("does not lose a write when another instance moves first", async () => {
+    // Models a second process: the first read of every attempt is answered
+    // with stale state, so the CAS must fail and the mutator must re-run
+    // against what is actually stored.
+    let stored: string | null = null;
+    let version = 0;
+    let stolen = false;
+
+    store.setDriver({
+      name: "cas-test",
+      async read() {
+        return stored;
+      },
+      async write(_collection, serialised) {
+        stored = serialised;
+      },
+      async remove() {
+        stored = null;
+      },
+      async readVersioned() {
+        return { serialised: stored, version: String(version) };
+      },
+      async writeIfUnchanged(_collection, serialised, expected) {
+        // Exactly once, pretend another instance wrote between read and write.
+        if (!stolen) {
+          stolen = true;
+          stored = JSON.stringify(["from-the-other-instance"], null, 2);
+          version += 1;
+          return false;
+        }
+        if (expected !== String(version)) return false;
+        stored = serialised;
+        version += 1;
+        return true;
+      },
+    });
+
+    await store.mutate<string[], null>("cas", [], (current) => ({
+      next: [...current, "mine"],
+      result: null,
+    }));
+
+    const final = await store.readCollection<string[]>("cas", []);
+    // The other instance's write survived AND ours landed on top of it.
+    assert.deepEqual(final, ["from-the-other-instance", "mine"]);
+  });
+
+  it("gives up loudly rather than silently dropping a write", async () => {
+    store.setDriver({
+      name: "always-contended",
+      async read() {
+        return null;
+      },
+      async write() {},
+      async remove() {},
+      async readVersioned() {
+        return { serialised: null, version: "0" };
+      },
+      async writeIfUnchanged() {
+        return false; // never wins
+      },
+    });
+
+    await assert.rejects(
+      store.mutate<string[], null>("hot", [], (current) => ({
+        next: [...current, "x"],
+        result: null,
+      })),
+      /contended attempts/,
+    );
+  });
+});

@@ -1,0 +1,404 @@
+@import "tailwindcss";
+
+/*
+ * Apex design language.
+ *
+ * Derived from the Reznikov Engineering cockpit screenshots: a near-black
+ * field, a single cyan signal colour for anything the system knows, and a
+ * warm amber reserved exclusively for anything that wants a human. Type is
+ * uppercase, wide-tracked and mono-ish so the whole surface reads as
+ * instrumentation rather than as a web page.
+ */
+
+@theme {
+  /* Pulled from the NYX Core mark: a navy field, not a black one. */
+  --color-void: #060b16;
+  --color-hull: #0a1322;
+  --color-plate: #0e1a2c;
+
+  /* Chrome, for anything that should read as machined rather than lit. */
+  --color-chrome: #9fb4c9;
+  --color-chrome-dim: #4a5f75;
+
+  --color-signal: #3ec2ff;
+  --color-signal-dim: #1f6f9c;
+  --color-signal-deep: #0d2c49;
+
+  /* The reference photo is not one blue — it runs deep indigo through teal to
+     a hot white core. These are the stops that gradient moves between. */
+  --color-abyss: #10306b;
+  --color-violet: #4a6fe0;
+  --color-aqua: #1aa8ff;
+  --color-ice: #b9ecff;
+
+  --color-attend: #f2c14e;
+  --color-attend-dim: #8a6c22;
+
+  --color-alive: #34e5a1;
+  --color-alert: #ff6b6b;
+
+  --color-ink: #dbeef4;
+  --color-ink-soft: #92abb6;
+  --color-ink-faint: #566a74;
+
+  /* Monospace read as a terminal, not as instrumentation. These are the
+     humanist UI faces already on macOS, Windows and Linux, so there is no
+     webfont to download and nothing to shift on load. */
+  --font-hud:
+    "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system,
+    ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
+  --font-display:
+    "Segoe UI Variable Display", "SF Pro Display", "Inter", -apple-system,
+    ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-hud);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* The cockpit sits in a shallow well of light rather than on flat black, and
+   the well drifts — three offset radial pools moving on different periods, so
+   the background never resolves into a static gradient. */
+.field-vignette {
+  background:
+    radial-gradient(90% 70% at 30% 20%, rgba(74, 111, 224, 0.14), transparent 60%),
+    radial-gradient(80% 60% at 75% 70%, rgba(26, 168, 255, 0.12), transparent 62%),
+    radial-gradient(120% 90% at 50% 110%, rgba(16, 48, 107, 0.4), transparent 70%),
+    var(--color-void);
+  background-size: 200% 200%, 200% 200%, 200% 200%, auto;
+  animation: field-drift 48s ease-in-out infinite alternate;
+}
+
+@keyframes field-drift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 50% 100%;
+  }
+  50% {
+    background-position: 40% 30%, 60% 60%, 45% 90%;
+  }
+  100% {
+    background-position: 100% 60%, 0% 20%, 55% 100%;
+  }
+}
+
+/* Hairline rules that read as etched glass, not as borders. */
+.rule {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(62, 194, 255, 0.35) 12%,
+    rgba(62, 194, 255, 0.35) 88%,
+    transparent
+  );
+  height: 1px;
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--color-ink-faint);
+}
+
+/* Labels are set on a single line by default. This variant is for the few
+   that legitimately wrap — a falsifier is a sentence, not a tag. */
+.label-flow {
+  line-height: 1.7;
+}
+
+.label-lit {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-signal);
+}
+
+/* Colour that moves through itself rather than sitting still. Used on the
+   few things that should feel alive — the clock, section titles. */
+.aurora {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-ice) 0%,
+    var(--color-aqua) 22%,
+    var(--color-signal) 44%,
+    var(--color-violet) 68%,
+    var(--color-aqua) 86%,
+    var(--color-ice) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: aurora-shift 14s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-shift {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+/* The same movement as a hairline, for rules and underscores. */
+.aurora-rule {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-violet),
+    var(--color-aqua),
+    var(--color-ice),
+    var(--color-aqua),
+    transparent
+  );
+  background-size: 300% 100%;
+  animation: aurora-shift 11s ease-in-out infinite alternate;
+}
+
+.chip {
+  border: 1px solid rgba(62, 194, 255, 0.28);
+  background: rgba(62, 194, 255, 0.06);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0 12px rgba(62, 194, 255, 0.08),
+    0 0 12px rgba(62, 194, 255, 0.06);
+}
+
+.chip-attend {
+  border-color: rgba(242, 193, 78, 0.4);
+  background: rgba(242, 193, 78, 0.08);
+  box-shadow:
+    inset 0 0 12px rgba(242, 193, 78, 0.1),
+    0 0 14px rgba(242, 193, 78, 0.12);
+}
+
+.panel {
+  border: 1px solid rgba(62, 194, 255, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(12, 20, 28, 0.92),
+    rgba(6, 11, 16, 0.92)
+  );
+  backdrop-filter: blur(14px);
+}
+
+.glow-text {
+  filter: drop-shadow(0 0 22px rgba(62, 194, 255, 0.35));
+}
+
+/* The scan line that crowns the whole cockpit. */
+@keyframes scan-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.scan-sweep {
+  animation: scan-sweep 7s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* ── Constellation labels ─────────────────────────────────────────────────
+ *
+ * Rendered at a constant screen size rather than scaled with depth, so every
+ * seat stays readable however far back it sits. Styled here rather than
+ * inline because these are DOM nodes inside the WebGL scene and there is one
+ * per agent — inline objects would allocate on every render.
+ */
+
+.node-label {
+  white-space: nowrap;
+  transform: translateY(-30px);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(212 240 250);
+  text-shadow:
+    0 0 12px rgba(62, 194, 255, 0.5),
+    0 1px 3px rgba(0, 0, 0, 0.9);
+  transition: color 200ms ease;
+}
+
+.node-label-below {
+  /* Integration seats label downward, so the two families do not crowd the
+     same band of screen above the constellation. */
+  transform: translateY(28px);
+  font-size: 9px;
+  opacity: 0.72;
+}
+
+.node-label-primary {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: rgb(255 236 186);
+  text-shadow:
+    0 0 16px rgba(242, 193, 78, 0.85),
+    0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Microphone level ─────────────────────────────────────────────────────
+ *
+ * `--voice-level`, `--voice-bass`, `--voice-mids` and `--voice-treble` are
+ * written to the document element by `lib/useVoice.ts`, from real analyser
+ * readings. Nothing here animates on a timer: if these do not move, the
+ * microphone is not being heard, and the interface should say so by staying
+ * still rather than by pretending.
+ */
+
+.mic-button {
+  color: var(--color-signal);
+  border: 1px solid rgba(62, 194, 255, 0.35);
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(62, 194, 255, 0.22),
+    rgba(6, 18, 30, 0.85) 70%
+  );
+  box-shadow:
+    inset 0 0 18px rgba(62, 194, 255, 0.2),
+    0 0 20px rgba(62, 194, 255, 0.18);
+}
+
+.mic-button-live {
+  color: var(--color-attend);
+  border-color: rgba(242, 193, 78, 0.55);
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(242, 193, 78, 0.28),
+    rgba(20, 14, 4, 0.85) 70%
+  );
+  box-shadow:
+    inset 0 0 22px rgba(242, 193, 78, 0.3),
+    /* The outer glow tracks the measured level, so the button itself is a
+       meter and not only a switch. */
+      0 0 calc(18px + var(--voice-level, 0) * 46px) rgba(242, 193, 78, 0.45);
+}
+
+.voice-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+  border: 1px solid var(--color-attend);
+  pointer-events: none;
+  transform: scale(calc(1 + var(--voice-level, 0) * 0.55));
+  opacity: calc(0.12 + var(--voice-level, 0) * 1.1);
+}
+
+.voice-ring-outer {
+  inset: -13px;
+  border-color: rgba(242, 193, 78, 0.5);
+  transform: scale(calc(1 + var(--voice-level, 0) * 0.85));
+  opacity: calc(0.06 + var(--voice-level, 0) * 0.7);
+}
+
+.voice-bars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 26px;
+  min-width: 0;
+}
+
+.voice-bar {
+  flex: 1 1 2px;
+  max-width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    var(--color-signal),
+    rgba(122, 108, 240, 0.9)
+  );
+  transform: scaleY(calc(0.06 + var(--band, 0) * 1.9));
+  opacity: calc(0.28 + var(--band, 0) * 1.6);
+  /* Staggered by index so the field travels rather than pumping as one block. */
+  transition: transform calc(55ms + var(--i, 0) * 1.5ms) linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Damped, not removed. The bars are the only evidence the operator has that
+     the microphone is live, so they must keep answering. */
+  .voice-ring,
+  .voice-ring-outer {
+    transform: scale(calc(1 + var(--voice-level, 0) * 0.2));
+  }
+  .voice-bar {
+    transform: scaleY(calc(0.2 + var(--band, 0) * 0.6));
+    transition: none;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(62, 194, 255, 0.16);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-sweep,
+  .pulse-soft,
+  .rise-in,
+  .aurora,
+  .aurora-rule,
+  .field-vignette {
+    animation: none;
+  }
+}
