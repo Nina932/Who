@@ -274,7 +274,24 @@ export function mutate<T, R>(
   return run;
 }
 
-/** Monotonic-ish id that stays readable in the stored documents. */
+/**
+ * Monotonic-ish id that stays readable in the stored documents.
+ *
+ * The random suffix alone was not enough. Five base-36 characters is about 60
+ * million values, so a burst of 5,000 ids inside one millisecond collides
+ * roughly one time in five — and these ids key stored documents, so a
+ * collision silently overwrites an audit row or a case rather than failing
+ * loudly. The suite caught this intermittently and it read as a flaky test.
+ *
+ * The counter makes uniqueness structural rather than probabilistic: within a
+ * process no two ids can match, whatever the clock does. Randomness is kept
+ * for the case of several processes writing to the same store in the same
+ * millisecond, which the counter cannot see.
+ */
+let sequence = 0;
+
 export function id(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  sequence = (sequence + 1) % 0xffff_ffff;
+  const counter = sequence.toString(36).padStart(4, "0");
+  return `${prefix}_${Date.now().toString(36)}${counter}${Math.random().toString(36).slice(2, 7)}`;
 }

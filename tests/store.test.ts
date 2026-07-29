@@ -80,6 +80,16 @@ describe("id", () => {
     const ids = new Set(Array.from({ length: 5000 }, () => store.id("t")));
     assert.equal(ids.size, 5000);
   });
+
+  it("cannot collide, rather than being unlikely to", () => {
+    // This test used to pass by luck. Five random base-36 characters gives
+    // about sixty million values, so five thousand ids in one millisecond
+    // collided roughly one run in five — and ids key stored documents, so the
+    // real cost was a silently overwritten audit row, not a red test.
+    // A hundred thousand in a burst would be hopeless on randomness alone.
+    const ids = new Set(Array.from({ length: 100_000 }, () => store.id("t")));
+    assert.equal(ids.size, 100_000);
+  });
 });
 
 describe("drivers", () => {
