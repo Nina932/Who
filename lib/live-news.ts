@@ -210,7 +210,7 @@ export async function fetchLiveNews(
   const perSource = new Map<string, number>();
   const seen = new Set<string>();
   const ranked: LiveHeadline[] = [];
-  const sourceLimit = terms.length === 0 ? 2 : 4;
+  const sourceLimit = /\b(?:news|headlines?)\b/i.test(query) ? 2 : 4;
   for (const row of rankedCandidates) {
     const key = (row.item.link || row.item.title).toLowerCase();
     if (seen.has(key)) continue;

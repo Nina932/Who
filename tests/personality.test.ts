@@ -37,4 +37,13 @@ describe("spoken personality", () => {
     assert.match(source, /MORPHEUS_VOICE_PITCH \?\? 0\.68/);
     assert.match(source, /guy natural/);
   });
+
+  it("keeps one Morpheus identity in the visible transcript", async () => {
+    const source = await fs.readFile(
+      path.join(ROOT, "components/TranscriptRail.tsx"),
+      "utf8",
+    );
+    assert.match(source, /\{isOperator \? "You" : "Morpheus"\}/);
+    assert.doesNotMatch(source, /AGENTS_BY_ID/);
+  });
 });

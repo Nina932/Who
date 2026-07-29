@@ -22,6 +22,7 @@ import {
 } from "@/lib/connection-intent";
 import {
   authorizeUrl,
+  listCalendarEvents,
   makeState,
   statuses,
   type ConnectorStatus,
@@ -33,9 +34,15 @@ import {
   telegramWorkerRuntimeStatus,
 } from "@/lib/operator-integrations";
 import {
+  audioUnderstandingReply,
+  requestsAudioUnderstanding,
   requestsSystemStatus,
   systemStatusReply,
 } from "@/lib/system-status";
+import {
+  calendarAgendaReply,
+  requestsCalendarAgenda,
+} from "@/lib/calendar-intent";
 
 /**
  * The orchestrator endpoint.
@@ -97,6 +104,8 @@ export async function POST(request: Request) {
   const channel = body.channel === "telegram" ? "telegram" : "web";
   const needsLiveNews = requestsFreshNews(utterance, history);
   const needsSystemStatus = requestsSystemStatus(utterance);
+  const needsAudioUnderstanding = requestsAudioUnderstanding(utterance);
+  const needsCalendarAgenda = requestsCalendarAgenda(utterance, history);
   const requestedConnectorId = requestedConnection(utterance, history);
   const directNewsRequest =
     /\b(news|headlines?|latest|newest|current events?|what(?:'s| is) happening)\b/i.test(
@@ -137,6 +146,7 @@ export async function POST(request: Request) {
     connectorStatuses,
     telegram,
     telegramWorker,
+    calendarAgenda,
   ] =
     await Promise.all([
     recall(utterance),
@@ -149,6 +159,9 @@ export async function POST(request: Request) {
     needsSystemStatus
       ? telegramWorkerRuntimeStatus()
       : Promise.resolve({}),
+    needsCalendarAgenda
+      ? listCalendarEvents(1)
+      : Promise.resolve(null),
   ]);
   const telegramWithRuntime = { ...telegram, ...telegramWorker };
   const requestedConnector = requestedConnectorId
@@ -291,6 +304,20 @@ export async function POST(request: Request) {
         send("delta", {
           text: systemStatusReply(stackStatus(), telegramWithRuntime),
         });
+        send("done", { local: true, measured: true, learned: [] });
+        controller.close();
+        return;
+      }
+
+      if (calendarAgenda) {
+        send("delta", { text: calendarAgendaReply(calendarAgenda) });
+        send("done", { local: true, measured: true, learned: [] });
+        controller.close();
+        return;
+      }
+
+      if (needsAudioUnderstanding) {
+        send("delta", { text: audioUnderstandingReply() });
         send("done", { local: true, measured: true, learned: [] });
         controller.close();
         return;

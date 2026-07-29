@@ -52,6 +52,16 @@ describe("speech playback echo guard", () => {
     );
   });
 
+  it("preserves a real question spoken before a delayed playback tail", () => {
+    assert.equal(
+      withoutPlaybackEcho(
+        "which ten percent got it I'll keep an eye on the metrics and shout if anything starts to climb",
+        "Got it. I’ll keep an eye on the metrics and shout if anything starts to climb.",
+      ),
+      "which ten percent",
+    );
+  });
+
   it("does not suppress unrelated operator speech", () => {
     assert.equal(
       withoutPlaybackEcho("tell me about Facebook and yourself", playback),

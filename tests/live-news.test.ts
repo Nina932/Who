@@ -108,7 +108,7 @@ describe("live conversational news", () => {
     try {
       const { fetchLiveNews } = await import("../lib/live-news");
       const result = await fetchLiveNews(
-        "tell me the news",
+        "tell me the AI news",
         Date.parse("2026-07-29T12:00:00Z"),
       );
       const counts = new Map<string, number>();

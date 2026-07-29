@@ -140,15 +140,34 @@ export function withoutPlaybackEcho(
   const spoken = spokenWords(lastPlayback);
   if (heard.length < 5 || spoken.length < 5) return transcript.trim();
 
-  const maxPrefix = Math.min(heard.length, spoken.length);
-  for (let length = maxPrefix; length >= 5; length -= 1) {
-    for (let start = 0; start + length <= spoken.length; start += 1) {
-      let matches = 0;
-      for (let index = 0; index < length; index += 1) {
-        if (heard[index] === spoken[start + index]) matches += 1;
+  const maxLength = Math.min(heard.length, spoken.length);
+  // The operator may begin talking before the recognizer emits the delayed
+  // speaker echo: "which ten percent [echoed assistant sentence]". Search the
+  // whole recognized phrase, remove only the matched playback segment, and
+  // preserve genuine words on either side.
+  for (let length = maxLength; length >= 5; length -= 1) {
+    for (
+      let heardStart = 0;
+      heardStart + length <= heard.length;
+      heardStart += 1
+    ) {
+      for (
+        let spokenStart = 0;
+        spokenStart + length <= spoken.length;
+        spokenStart += 1
+      ) {
+        let matches = 0;
+        for (let index = 0; index < length; index += 1) {
+          if (heard[heardStart + index] === spoken[spokenStart + index]) {
+            matches += 1;
+          }
+        }
+        if (matches / length < 0.72) continue;
+        return [
+          ...heard.slice(0, heardStart),
+          ...heard.slice(heardStart + length),
+        ].join(" ");
       }
-      if (matches / length < 0.72) continue;
-      return heard.slice(length).join(" ");
     }
   }
   return transcript.trim();

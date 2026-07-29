@@ -4,12 +4,11 @@
  * The conversation, kept to the side.
  *
  * Voice-first does not mean text-blind: the operator needs to scan back over
- * what was said and see which seat each answer came from. Attribution is the
- * point — every reply is stamped with the agent that produced it.
+ * what was said. Specialists are internal capability routing, not characters
+ * taking over the conversation, so every assistant turn keeps one identity.
  */
 
 import { useEffect, useRef } from "react";
-import { AGENTS_BY_ID } from "@/lib/agents";
 import type { Turn } from "@/lib/orchestrator";
 
 export interface TranscriptRailProps {
@@ -34,7 +33,6 @@ export default function TranscriptRail({ turns }: TranscriptRailProps) {
         className="max-h-[46vh] space-y-4 overflow-y-auto pr-2"
       >
         {turns.map((turn) => {
-          const agent = turn.agentId ? AGENTS_BY_ID[turn.agentId] : null;
           const isOperator = turn.role === "operator";
 
           return (
@@ -58,7 +56,7 @@ export default function TranscriptRail({ turns }: TranscriptRailProps) {
                       : "var(--color-attend)",
                   }}
                 >
-                  {isOperator ? "You" : (agent?.name ?? "Morpheus")}
+                  {isOperator ? "You" : "Morpheus"}
                 </span>
               </div>
               <p

@@ -8,9 +8,19 @@ export interface ModelRouteStatus {
 }
 
 export function requestsSystemStatus(utterance: string): boolean {
-  return /\b(?:system status|health check|how (?:is|are) (?:the |our |your )?(?:system|systems|stack|cockpit)|how (?:the |our |your )(?:system|stack|cockpit) is (?:working|running)|is everything (?:working|running|online)|ci\s*\/?\s*cd|pipeline status|build status)\b/i.test(
+  return /\b(?:system status|health check|how (?:is|are) (?:the |our |your )?(?:system|systems|stack|cockpit)|how (?:the |our |your )?(?:system|systems|stack|cockpit) (?:is|are) (?:working|running)|is everything (?:working|running|online)|ci\s*\/?\s*cd|pipeline status|build status)\b/i.test(
     utterance,
   );
+}
+
+export function requestsAudioUnderstanding(utterance: string): boolean {
+  return /\b(?:can|could|did|do)\s+you\s+hear\b[\s\S]*\b(?:dog|bark|sound|noise|music|voice)\b|\b(?:understand|recognize|identify)\b[\s\S]*\b(?:dog|bark|sound|noise)\b/i.test(
+    utterance,
+  );
+}
+
+export function audioUnderstandingReply(): string {
+  return "I can detect microphone energy and react to it visually, but I cannot classify a bark or identify which sound made it. I only understand words returned by speech recognition.";
 }
 
 export function systemStatusReply(
