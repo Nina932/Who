@@ -62,6 +62,10 @@ Windows Terminal or PowerShell on Windows, any terminal on Linux.
 You need [Node.js 20 or newer](https://nodejs.org) (22 is what this was built
 and tested on). Check with `node -v`.
 
+Note that `node_modules` is per-project: having Node installed, or having run
+`npm install` in some other folder, does not cover this one. The `npm install`
+below creates this project's own, and you only run it once.
+
 ```bash
 git clone https://github.com/Nina932/Who.git
 cd Who
@@ -85,13 +89,25 @@ It works with no configuration: attendance, voice, style learning and every
 surface run offline. Model-backed steps report exactly which key they need
 rather than pretending.
 
-For the full stack:
+For the full stack, set the keys and restart. macOS and Linux:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # Opus (judgment), Sonnet (vision), Haiku (memory)
 export GOOGLE_API_KEY=...             # Gemini Flash (quick), Pro (hard)
 npm run dev
 ```
+
+Windows PowerShell — `export` is not a thing here:
+
+```powershell
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+$env:GOOGLE_API_KEY="..."
+npm run dev
+```
+
+Either way this lasts only for that terminal window. To make it stick, copy
+`.env.example` to `.env.local` and fill it in — Next.js reads that on startup,
+and `.env*` is gitignored so keys cannot be committed by accident.
 
 Two decisions happen per turn, and they are orthogonal: **Specialist
 Attendance** picks who answers, **model routing** picks which brain they use.
