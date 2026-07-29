@@ -791,7 +791,11 @@ export async function appendToLog(
 export async function postToSlack(
   text: string,
   channel?: string,
+  granted?: string[],
 ): Promise<CallOutcome<{ ts: string }>> {
+  const allowed = scopeSatisfied(granted, "chat:write");
+  if (!allowed.ok) return { ok: false, error: allowed.error };
+
   const token = await accessToken("slack");
   if (!token) {
     return {

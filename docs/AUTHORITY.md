@@ -360,24 +360,138 @@ amend 1003                  → "The previous approval no longer applies." (new 
 execute 1003                → "1003 is cancelled, not approved."
 ```
 
-## 12. Not built
+## 12. Exactly once
 
-- **No wake-word or push-to-talk gate.** The floor model exists and the API
-  honours it, but the browser microphone path does not yet drive it — the
-  client sends `floor` rather than the recogniser owning it.
-- **`self-playback` is a flag, not detection.** The caller says whether audio
-  came from the speaker. Acoustic echo cancellation would decide it properly.
-- **Step-up is a shared secret, not a hardware key.** Real, and the right
-  shape, but a secret in an environment variable is not a possession factor in
-  the way a security key is.
-- **Sessions are per-process.** A restart signs you out. Correct for a local
-  single-operator tool, wrong for anything multi-device.
-- **Only Google connectors enforce scope.** Slack and LinkedIn calls do not yet
-  take a granted set.
-- **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
-  capabilities with no sandbox behind them.
-- **No spend metering.** The limit is per action; nothing tracks cumulative
-  spend across a day.
+Two failures a sequential test cannot see, both found by review and both real.
+
+### The audit log repeated itself
+
+`flush()` called `audit()`, which returns the whole in-memory log — so
+flushing after every operation persisted the same rows again and again. Three
+events became six stored rows, the first written three times.
+
+Reproduced before fixing, and again after:
+
+```
+before:  events: 3 | persisted rows: 6
+         issued:mail.draft, redeemed:mail.draft, issued:mail.draft,
+         refused:mail.send, redeemed:mail.draft, issued:mail.draft
+
+after:   events: 3 | persisted rows: 3
+```
+
+`drainAudit()` returns only what has not been handed out and advances a
+cursor; `audit()` still returns everything, because reading a log for display
+must not consume it. Trimming moves the cursor with it, so a busy broker
+cannot silently drop un-persisted rows off the front.
+
+An audit log that repeats itself is worse than none — it looks like more
+happened than did.
+
+### Execution was a race with a comment on it
+
+`executeApproved` read the status, checked it, then wrote it. Two requests
+arriving together both saw `approved`, both passed, and both would have run —
+the same email twice.
+
+Claiming is now a compare-and-swap inside a single `mutate`, which is
+serialised per collection and, on the Redis driver, guarded by a server-side
+compare-and-set. Exactly one caller can observe `approved` and write
+`executing`.
+
+Behind it is an **idempotency ledger** keyed on `capabilityId:actionId` — the
+same key a retry would carry and a different action never collides with. It
+catches the case the status cannot: a crash between claiming and completing.
+
+The subtlety worth stating: a claim is **released** when the call reached
+nothing. A refused connector call must not leave a ledger entry, or a
+legitimate retry after fixing the connector is turned away as a duplicate.
+
+Tested by firing two `executeApproved` calls with `Promise.all` and asserting
+exactly one claims it.
+
+## 13. One way out
+
+`runTool` being safe is worth nothing if another module imports
+`createMailDraft` directly. `tests/seam.test.ts` reads the source and refuses
+any import of a connector mutation from outside `lib/tools.ts`, refuses
+`tool.run(` in the Loops Engine, and refuses a direct connector call in any
+API route.
+
+It immediately found one: `loops.ts` imported `postToSlack` for gate
+notifications, so a message left the process without passing the boundary. A
+notification is small, but "small" is not a category the boundary knows about.
+
+It now goes through `withAuthority` under a new `notify.operator` capability —
+level 3, distinct from `chat.post` because a message to your own channel is
+noise if wrong, not damage. Under the default ceiling of 2 it does not fire,
+which is correct: Morpheus prepares rather than acts until told otherwise.
+
+A test rather than a convention, because a convention is a thing people
+remember until the afternoon they are in a hurry.
+
+## 14. Renames
+
+Never rename a product with unrestricted substring replacement. `authorization`
+contains `thor`.
+
+Use path-level renaming, exact identifier replacement, exact environment-prefix
+replacement, case-sensitive whole-word matching — and afterwards, review URLs,
+protocol constants, headers and grant types by hand, because those are the ones
+nothing exercises without live credentials.
+
+`tests/naming.test.ts` catches the class. Structured renaming prevents the
+damage.
+
+## 15. Not built
+
+This is not production-safe, and the gaps are architectural rather than
+cosmetic. In the order they should be closed:
+
+1. **A session proves continuity, not identity.** A random server-issued
+   cookie proves "same browser", not "this is the authorised operator". There
+   is no `operatorId`, no workspace, no authentication method or strength on
+   the record. Anything reachable over a network needs real login before the
+   session binding means what it claims.
+2. **Step-up is a shared secret.** Cryptographically real *only* while the
+   secret lives outside both Morpheus and the browser — so it is a development
+   and CLI-authenticator mechanism, not the approval method for a normal user.
+   WebAuthn/passkeys is the replacement, and `verifyStepUp` is the one function
+   that changes.
+3. **Voice approval is not a conversation.** The floor model and the audio
+   provenance rules exist and the API honours them, but the browser microphone
+   does not own the floor — the client sends it. `self-playback` is a flag,
+   not acoustic echo detection. For high-risk actions voice should only
+   *begin* approval; a device confirmation should finish it.
+4. **Enforcement is not yet everywhere.** Slack now checks its scope; LinkedIn
+   does not. Read operations have capabilities registered but are not gated
+   the way mutations are, and reads can expose mail, customer records, source
+   and logs.
+5. **State is per-process.** Sessions, pending actions and challenges live in
+   memory. Grants dying on restart is intended; being signed out and losing
+   pending approvals because a request reached another instance is not.
+   Sessions, pending actions, approval evidence, audit records and the
+   idempotency ledger belong in a transactional store; one-use grants and
+   challenges belong in Redis with expiry.
+6. **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
+   capabilities with nothing behind them — no isolated filesystem, no limits,
+   no timeout, no network policy, no non-root user. Until that exists they
+   should be denied rather than treated as reversible execution.
+7. **No cumulative spend control.** The limit is per action. Nothing tracks
+   spend per day, per vendor, per product, or total pending.
+8. **Morpheus scopes are not OAuth scopes.** The redeemed list is an
+   application-level authority scope; the underlying token may still be
+   broader. That is only acceptable while the connector checks the grant
+   before every operation and no other path exists — which the seam test now
+   holds. Separate connections per permission level would be the outer
+   control.
+
+The next milestone should not add capabilities. It should prove one complete
+path under realistic conditions — authenticated operator speaks, action
+prepared, arguments frozen, consequence read back, action-specific approval,
+step-up where required, atomic claim, one-use redemption, a real connected
+service, verified result, one accurate audit trail, spoken receipt — and
+survive retries, concurrent calls, restarts and altered commands.
 - **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
   capabilities with no sandbox behind them.
 - **No spend metering.** The limit is checked per action; nothing tracks

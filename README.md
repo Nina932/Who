@@ -307,7 +307,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 401 tests + build, no API keys needed
+npm run verify        # typecheck + 415 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```

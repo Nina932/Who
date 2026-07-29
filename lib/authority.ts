@@ -178,6 +178,17 @@ export const CAPABILITIES: Capability[] = [
     consequence: "Colleagues or clients see it, attributed to you.",
   },
   {
+    id: "notify.operator",
+    label: "Send you a notification",
+    domain: "communication",
+    level: 3,
+    reversible: true,
+    scopes: ["chat:write"],
+    // Distinct from `chat.post`, which is seen by clients and colleagues.
+    // This is a message to your own channel — noise if wrong, not damage.
+    consequence: "A message in your own notification channel. Deleting it costs a click.",
+  },
+  {
     id: "social.publish",
     label: "Publish a post",
     domain: "communication",

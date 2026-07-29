@@ -109,7 +109,17 @@ export interface Broker {
   ):
     | { ok: true; scopes: string[]; capabilityId: string }
     | { ok: false; refusal: Refusal; detail?: string };
+  /** The whole in-memory log. Reading it does not mark anything persisted. */
   audit(): AuditEntry[];
+  /**
+   * Entries not yet handed out, removed as they are returned.
+   *
+   * `audit()` returns everything every time, so a caller that persisted its
+   * result after each operation wrote the same rows repeatedly — three events
+   * became six stored rows, with the first appearing three times. An audit
+   * log is security evidence; duplicates make it evidence of nothing.
+   */
+  drainAudit(): AuditEntry[];
   outstanding(now?: number): Grant[];
 }
 
@@ -118,12 +128,19 @@ let counter = 0;
 export function createBroker(policy: Policy, seed = "g"): Broker {
   const grants = new Map<string, Grant>();
   const log: AuditEntry[] = [];
+  /** How much of `log` has already been handed to a persister. */
+  let drained = 0;
 
   const record = (entry: AuditEntry) => {
     log.push(entry);
     // Bounded: the audit log is evidence, not a database. The caller persists
-    // what it wants to keep.
-    if (log.length > 2000) log.splice(0, log.length - 2000);
+    // what it wants to keep. Trimming moves the drain cursor with it, so
+    // trimming can never cause an un-persisted entry to be skipped.
+    if (log.length > 2000) {
+      const removed = log.length - 2000;
+      log.splice(0, removed);
+      drained = Math.max(0, drained - removed);
+    }
   };
 
   const mint = (
@@ -356,6 +373,14 @@ export function createBroker(policy: Policy, seed = "g"): Broker {
 
     audit() {
       return [...log].reverse();
+    },
+
+    drainAudit() {
+      const fresh = log.slice(drained);
+      drained = log.length;
+      // Newest first, matching `audit()`, so a caller prepending to a stored
+      // log keeps one consistent ordering.
+      return fresh.reverse();
     },
 
     outstanding(now = Date.now()) {

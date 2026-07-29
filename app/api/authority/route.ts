@@ -245,7 +245,7 @@ export async function POST(request: Request) {
         }
         const broker = await liveBroker();
         const result = broker.request(capabilityId);
-        await appendAudit(broker.audit().slice(0, 5));
+        await appendAudit(broker.drainAudit());
         return NextResponse.json(
           result.ok
             ? {
@@ -269,7 +269,7 @@ export async function POST(request: Request) {
         }
         const broker = await liveBroker();
         const result = broker.approve(capabilityId, approvedFor);
-        await appendAudit(broker.audit().slice(0, 5));
+        await appendAudit(broker.drainAudit());
         return NextResponse.json(
           result.ok
             ? {

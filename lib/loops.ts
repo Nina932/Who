@@ -17,7 +17,7 @@
 
 import { callRole, parseJson, type ModelRole } from "./models";
 import { TOOLS, runTool, toolInstruction } from "./tools";
-import { postToSlack } from "./connectors";
+import { withAuthority } from "./authority-runtime";
 import { recall, renderForPrompt as renderMemory } from "./memory";
 import { getProfile, renderForPrompt as renderStyle } from "./style";
 import { id, mutate, readCollection } from "./store";
@@ -506,7 +506,26 @@ async function notifyGate(loop: LoopDefinition, run: LoopRun): Promise<void> {
     .filter(Boolean)
     .join("\n");
 
-  const result = await postToSlack(message);
+  // Through the authority layer like everything else that leaves the process.
+  // A notification is small, but "small" is not a category the boundary knows
+  // about — and the seam is only a boundary if nothing goes round it.
+  const outcome = await withAuthority(
+    "notify.operator",
+    async (granted) => {
+      const { postToSlack } = await import("./connectors");
+      return postToSlack(message, undefined, granted);
+    },
+    { args: { message } },
+  );
+
+  if (!outcome.ok) {
+    // Below the ceiling by default, which is correct: Morpheus prepares
+    // rather than acts until you say otherwise. Worth one line, not a failure.
+    console.info("loops: gate notification not sent —", outcome.reason);
+    return;
+  }
+
+  const result = outcome.value;
   // Not connected is the normal case, not an error worth shouting about.
   if (!result.ok && !result.needsConnection) {
     console.error("loops: gate notification rejected —", result.error);

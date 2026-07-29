@@ -30,6 +30,7 @@ import { id as newId, mutate, readCollection } from "./store";
 const POLICY = "policy";
 const AUDIT = "authority-audit";
 const PENDING = "pending-actions";
+const LEDGER = "execution-ledger";
 
 let broker: Broker | null = null;
 let signature = "";
@@ -71,10 +72,17 @@ export async function liveBroker(): Promise<Broker> {
   return broker;
 }
 
-/** Drain whatever the broker recorded into the durable log. */
+/**
+ * Move newly recorded entries into the durable log.
+ *
+ * `drainAudit` rather than `audit`: the latter returns the entire in-memory
+ * log every time, so flushing after each operation persisted the same rows
+ * over and over. Three events became six stored rows. An audit log that
+ * repeats itself is worse than none — it looks like more happened than did.
+ */
 async function flush(instance: Broker): Promise<void> {
-  const entries = instance.audit();
-  if (entries.length > 0) await appendAudit(entries.slice(0, 50));
+  const entries = instance.drainAudit();
+  if (entries.length > 0) await appendAudit(entries);
 }
 
 export interface Denied {
@@ -286,6 +294,94 @@ export async function grantFor(
 // ── Execution ────────────────────────────────────────────────────────────
 
 /**
+ * The idempotency key for one action, stable across retries.
+ *
+ * Derived from the action id, so a retry of the same approved action carries
+ * the same key and a *different* action never collides with it. This is what
+ * an external service would be handed to deduplicate on its side; here it
+ * also backs the local ledger.
+ */
+export function idempotencyKey(action: PendingAction): string {
+  return `${action.capabilityId}:${action.id}`;
+}
+
+/**
+ * Claim an approved action for execution, atomically.
+ *
+ * Without this, two requests arriving together both read `approved`, both
+ * pass the check, and both execute — sending the same email twice. Reading
+ * then writing is not a check; it is a race with a comment on it.
+ *
+ * The claim is a compare-and-swap inside a single `mutate`, which is
+ * serialised per collection and, on the Redis driver, guarded by a
+ * server-side compare-and-set. Exactly one caller can observe `approved` and
+ * write `executing`; every other caller sees the already-moved status.
+ *
+ * The ledger is the second line: a key already present means this action ran,
+ * even if the status was lost to a crash between claiming and completing.
+ */
+async function claimForExecution(
+  actionId: string,
+  now: number,
+): Promise<
+  | { ok: true; action: PendingAction }
+  | { ok: false; reason: string; action: PendingAction | null }
+> {
+  const claimed = await mutate<PendingAction[], { ok: boolean; reason?: string; action: PendingAction | null }>(
+    PENDING,
+    [],
+    (current) => {
+      const action = current.find((a) => a.id === actionId);
+      if (!action) return { next: current, result: { ok: false, reason: "No such action.", action: null } };
+
+      if (action.status !== "approved" || !action.grantId) {
+        return {
+          next: current,
+          result: {
+            ok: false,
+            // `executing` here means somebody else won the claim a moment ago.
+            reason:
+              action.status === "executing"
+                ? `${action.reference} is already being executed.`
+                : `${action.reference} is ${statusOf(action, now)}, not approved.`,
+            action,
+          },
+        };
+      }
+
+      const moved: PendingAction = { ...action, status: "executing" };
+      return {
+        next: current.map((a) => (a.id === actionId ? moved : a)),
+        result: { ok: true, action: moved },
+      };
+    },
+  );
+
+  if (!claimed.ok || !claimed.action) {
+    return { ok: false, reason: claimed.reason ?? "Could not claim.", action: claimed.action };
+  }
+
+  // Second line: has this exact action already run to completion?
+  const key = idempotencyKey(claimed.action);
+  const fresh = await mutate<Record<string, number>, boolean>(LEDGER, {}, (current) =>
+    current[key] === undefined
+      ? { next: { ...current, [key]: now }, result: true }
+      : { next: current, result: false },
+  );
+
+  if (!fresh) {
+    await patchPending(actionId, { status: "completed" });
+    return {
+      ok: false,
+      reason: `${claimed.action.reference} has already been executed. Nothing was done a second time.`,
+      action: claimed.action,
+    };
+  }
+
+  return { ok: true, action: claimed.action };
+}
+
+/**
  * Run an approved action.
  *
  * The missing link: a grant that nothing redeemed was a grant nothing could
@@ -299,20 +395,20 @@ export async function executeApproved(
   actionId: string,
   sessionId: string,
 ): Promise<{ ok: boolean; summary: string; action: PendingAction | null }> {
-  const action = (await allPending()).find((a) => a.id === actionId);
-  if (!action) return { ok: false, summary: "No such action.", action: null };
+  const now = Date.now();
 
-  if (action.status !== "approved" || !action.grantId) {
-    return {
-      ok: false,
-      summary: `${action.reference} is ${statusOf(action, Date.now())}, not approved.`,
-      action,
-    };
-  }
+  // Claimed before anything else happens. Every check after this point is
+  // running on state only this caller owns.
+  const claim = await claimForExecution(actionId, now);
+  if (!claim.ok) return { ok: false, summary: claim.reason, action: claim.action };
+  const action = claim.action;
 
   const { TOOLS, runTool } = await import("./tools");
   const tool = Object.values(TOOLS).find((t) => t.capabilityId === action.capabilityId);
   if (!tool) {
+    // Release the claim and the ledger entry: nothing ran, so a later attempt
+    // — once a tool exists — must not be refused as a duplicate.
+    await releaseClaim(action);
     return {
       ok: false,
       summary: `Nothing is wired to perform ${action.capabilityId}. The approval stands unused.`,
@@ -320,14 +416,16 @@ export async function executeApproved(
     };
   }
 
-  await patchPending(actionId, { status: "executing" });
-
   const result = await runTool(tool, action.immutableArguments, {
     grantId: action.grantId,
     pendingActionId: action.id,
     operatorSessionId: sessionId,
     proposeOnRefusal: false,
   });
+
+  // A refused call did not reach the world, so the ledger entry would
+  // otherwise block a legitimate retry after the reason is fixed.
+  if (!result.ok) await releaseClaim(action);
 
   const updated = await patchPending(actionId, {
     status: result.ok ? "completed" : "failed",
@@ -337,4 +435,21 @@ export async function executeApproved(
   });
 
   return { ok: result.ok, summary: result.summary, action: updated };
+}
+
+
+/** Undo a claim that turned out not to have run anything. */
+async function releaseClaim(action: PendingAction): Promise<void> {
+  const key = idempotencyKey(action);
+  await mutate<Record<string, number>, null>(LEDGER, {}, (current) => {
+    const next = { ...current };
+    delete next[key];
+    return { next, result: null };
+  });
+}
+
+/** Test seam: has this action been recorded as executed? */
+export async function hasExecuted(action: PendingAction): Promise<boolean> {
+  const ledger = await readCollection<Record<string, number>>(LEDGER, {});
+  return ledger[idempotencyKey(action)] !== undefined;
 }
