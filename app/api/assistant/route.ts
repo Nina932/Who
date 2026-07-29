@@ -3,14 +3,17 @@ import { AMBIENT } from "@/lib/ambient";
 import {
   addEntry,
   allProducts,
+  ask,
   assistantState,
   clearAssistantExamples,
   getCapacity,
+  pollFeeds,
   recordBrief,
   resolveBlocker,
   seedAssistantExamples,
   setCapacity,
 } from "@/lib/assistant-store";
+import { MODES_BY_ID, type ModeId } from "@/lib/modes";
 import { guardMutation } from "@/lib/guard";
 import type { Kind, Provenance } from "@/lib/knowledge";
 import type { Phase } from "@/lib/products";
@@ -45,6 +48,8 @@ interface Body {
   phase?: unknown;
   plannedHours?: unknown;
   bookedHours?: unknown;
+  mode?: unknown;
+  question?: unknown;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -152,6 +157,27 @@ export async function POST(request: Request) {
         const state = await assistantState(AMBIENT.operator);
         await recordBrief(state.brief);
         return reply();
+      }
+
+      case "poll-feeds": {
+        // Reports per source. A dead feed is named rather than folded into a
+        // silent "nothing new", which would be indistinguishable from a quiet
+        // week and is the failure mode of every feed reader ever written.
+        const results = await pollFeeds();
+        return reply({ poll: results });
+      }
+
+      case "ask": {
+        const mode = str(body.mode) as ModeId | undefined;
+        const question = str(body.question);
+        if (!mode || !MODES_BY_ID[mode]) {
+          return NextResponse.json(
+            { error: `mode must be one of: ${Object.keys(MODES_BY_ID).join(", ")}` },
+            { status: 400 },
+          );
+        }
+        if (!question) return NextResponse.json({ error: "question required." }, { status: 400 });
+        return NextResponse.json({ answer: await ask(mode, question, AMBIENT.operator) });
       }
 
       case "seed-examples":

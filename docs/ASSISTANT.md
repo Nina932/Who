@@ -129,10 +129,46 @@ open — and a made-up figure would turn the day's arithmetic into fiction.
 
 ![The brief](screenshots/brief.png)
 
-## 5. Intelligence, filtered rather than forwarded
+## 5. Time
 
-`lib/signals.ts`. The value is entirely in the discarding, and one rule makes
-discarding safe:
+The brief is derived server-side, so `new Date().getHours()` is the hour
+wherever the process runs. A UTC host greeted a UTC+4 operator with "Good
+evening" over breakfast — small, and the kind of small that makes everything
+else on the page feel guessed at.
+
+`THOR_TZ` is an IANA zone and is used for the greeting and for the working
+day. `THOR_DAY_START` / `THOR_DAY_END` bound the day, and **planned capacity
+is capped by what is left of it**: at four in the afternoon you do not have
+six hours, and a plan that says you do is a plan you will not finish.
+
+The greeting bands are five, not three — "Good morning" at 06:10 to someone
+who has been up since five reads as a script.
+
+## 6. The calendar
+
+`lib/calendar.ts`. `bookedHours` used to be a field nothing filled. It is now
+read from Google Calendar through the connector that already existed.
+
+The number is not "how long are today's meetings". It is **how much of the
+working time you have left is already spoken for**, so every event is clipped
+to the window between now and the end of your day. Three details that are
+easy to get wrong and are tested:
+
+- **Overlaps are merged, not summed.** Two meetings double-booked at the same
+  hour cost you one hour. Summing them understates your capacity, which is the
+  direction that makes an assistant useless — it starts insisting you have no
+  time when you do.
+- **All-day entries are markers, not eight hours of work.**
+- **Declined meetings do not occupy you.**
+
+When the calendar cannot be reached the brief says which of the three states
+it is in — not connected, unreachable with the error, or read successfully —
+rather than collapsing them into one sentence.
+
+## 7. Intelligence, filtered rather than forwarded
+
+`lib/signals.ts` and `lib/feeds.ts`. The value is entirely in the discarding,
+and one rule makes discarding safe:
 
 > **Relevance is measured against your current blocker first, your stack
 > second, and your phase third.**
@@ -157,12 +193,38 @@ PostgreSQL capability landing on FinAI's live-deployment blocker and a runtime
 deprecating an API G8 depends on — while a genuinely better model is correctly
 told to wait.
 
-When a model *is* available, `extractTags` uses it for one job only: pulling
-concrete keys out of raw text. It is never asked whether something matters.
-With no key it reports the missing key and the signal stays unclassified
-rather than being quietly filed as irrelevant.
+### The feed needs no API key
 
-## 6. The interruption gate
+The first version asked a model to pull keys out of an article and matched
+those against product state — which meant the whole intelligence layer
+silently degraded to nothing without a key.
+
+Reversing it removes the dependency entirely. Take the vocabulary the
+*products* already contain — blocker names, capability names, objectives — and
+look for it in the article. **A signal is relevant if your own words appear in
+it.** That is cheaper, and more honest: the matching vocabulary is inspectable
+and belongs to you rather than to a model's idea of what a keyword is.
+
+A stoplist keeps generic words out, or "data" from FinAI's *Data lineage*
+would match roughly every technology article ever written.
+
+`lib/feeds.ts` reads RSS and Atom over plain `fetch`, no dependency.
+Irrelevant items are dropped **at ingestion** rather than stored and filtered
+later — a store that accumulates every headline is a news database, and the
+first time it is slow the temptation is to show it unfiltered. Sources are
+configured with `THOR_FEEDS`; a dead one is reported by name rather than
+folded into a silent "nothing new", which is indistinguishable from a quiet
+week and is how every feed reader ends up lying.
+
+### The cap
+
+`ALERT_CAP = 3`. "Act now" is not a property of a signal — it is a claim on
+your attention, and attention does not scale. A day with eleven urgent items
+has no urgent items. Overflow moves to the digest **keeping its act-now
+verdict** (downgrading it to fit the cap would be lying to make a list fit),
+and the count of what was pushed down is shown.
+
+## 8. The interruption gate
 
 Five tests — does it require a decision, require an action, change a plan,
 create risk, is it time-sensitive. **Two must pass** to earn an interruption.
@@ -171,7 +233,40 @@ not there for the things that did matter.
 
 ![Product state](screenshots/products.png)
 
-## 7. Where the seam is
+## 9. The six modes
+
+`lib/modes.ts`. Six framings, one truth system. The whole point is that they
+**cannot disagree**: each mode is a different *selection* over the same
+derived state, never a different source of it. A Strategic Advisor reasoning
+from its own impression of the business rather than from the facts the Daily
+Operator reads is two assistants, and one of them is wrong.
+
+So a mode is exactly two things: which slice it is handed, and what it may not
+do with it. There is no per-mode knowledge.
+
+| Mode | Question | Refuses |
+| --- | --- | --- |
+| Daily Operator | What should I do today? | Strategy and the market. Today only. |
+| Product Chief of Staff | Where are my products, what changed, what is blocked? | Scheduling your day; picking a product |
+| Technical Intelligence | What happened that touches my stack? | Anything touching nothing you have |
+| Market Intelligence | What is in demand, what is commoditised? | Trends not tied to one of your products |
+| Weekly Review | What moved, what stalled? | Congratulating activity that moved no phase |
+| Strategic Advisor | Which product deserves my capacity? | Anything it cannot evidence |
+
+Tests assert that no two modes get the same context, that the Daily Operator
+is not shown product phases or the market, and that every prompt inherits the
+rule that a hypothesis is not a fact — the store enforces that, and one fluent
+paragraph could undo it.
+
+**With no API key**, the answer is the assembled context verbatim plus a plain
+statement that nothing phrased it. It degrades to *less fluent*, never to
+*made up*. When a model does answer, "what it was given" shows the exact
+context underneath — an answer you cannot check against its inputs is one you
+have to trust.
+
+![The modes and the intelligence filter](screenshots/brief-modes.png)
+
+## 10. Where the seam is
 
 `knowledge.ts`, `advisory.ts`, `products.ts`, `brief.ts` and `signals.ts` are
 pure and run in the browser. `assistant-store.ts` holds everything touching
@@ -179,17 +274,15 @@ disk or a provider. The brief is built **server-side** so the UI and anything
 handed to a model come from one derivation — two derivations of "what should I
 do today" is one too many.
 
-## 8. Not built
+## 11. Not built
 
-- **Nothing writes to the feed.** `Signal` is a shape with a classifier and
-  worked examples behind it; no RSS reader, no crawler, no provider changelog
-  poller fills it. The filtering is real and the source is not.
-- **Market intelligence is one input away from real.** The classification
-  works; what is missing is anything watching the market.
-- **No calendar.** `bookedHours` is a field the UI can set and a Calendar
-  connector could fill. Until it does, capacity says so.
-- **Conversational modes.** Daily Operator, Chief of Staff, Technical
-  Intelligence and the rest are five framings of one truth system. The truth
-  system exists; the framings are surfaces, not engines.
-- **Calibration.** Phase patience, blocker patience and the three-brief
-  avoidance threshold are constants. They should be learned.
+- **The feed does not poll itself.** `poll-feeds` is an action; nothing runs
+  it on a schedule yet. `lib/scheduler.ts` already has the tick that would.
+- **Market sources.** The default source list is databases, cloud and
+  infrastructure. Nothing in it watches buyers, so Market Intelligence works
+  against whatever market signals reach it and says so when none have.
+- **No push.** Alerts appear when you open the page. The interruption gate
+  decides *what* would be worth interrupting for; nothing does the
+  interrupting.
+- **Calibration.** Phase patience, blocker patience, the alert cap and the
+  three-brief avoidance threshold are constants. They should be learned.

@@ -47,9 +47,20 @@ function env(name: string): string {
   return process.env[name] ?? "";
 }
 
+/**
+ * The operator this build belongs to.
+ *
+ * A default rather than a hardcoding: `THOR_OPERATOR` still wins, so a second
+ * install greets whoever set it. The earlier blank default was right when the
+ * name came from someone else's screenshot and wrong once this became a
+ * particular person's cockpit — an assistant that will not say your name is
+ * not being careful, it is being unfinished.
+ */
+const DEFAULT_OPERATOR = "Nino";
+
 export const AMBIENT: AmbientConfig = {
   get operator() {
-    return env("THOR_OPERATOR");
+    return env("THOR_OPERATOR") || DEFAULT_OPERATOR;
   },
   get city() {
     return env("THOR_CITY");
@@ -57,6 +68,83 @@ export const AMBIENT: AmbientConfig = {
   temperature: 0,
   conditions: "",
 };
+
+// ── Time ─────────────────────────────────────────────────────────────────
+
+/**
+ * The operator's local hour — not the server's.
+ *
+ * The brief is derived server-side, so `new Date().getHours()` is the hour
+ * wherever the process happens to run. On a UTC host that greeted a UTC+4
+ * operator with "Good evening" over breakfast, which is the kind of small
+ * wrongness that makes everything else on the page feel guessed at.
+ *
+ * `THOR_TZ` is an IANA zone (`Asia/Tbilisi`). Unset falls back to the host's
+ * zone, which is correct when you run this on your own machine.
+ */
+export function timeZone(): string | undefined {
+  return env("THOR_TZ") || undefined;
+}
+
+export function localHour(at: number = Date.now()): number {
+  const zone = timeZone();
+  if (!zone) return new Date(at).getHours();
+  try {
+    return Number(
+      new Intl.DateTimeFormat("en-GB", {
+        hour: "2-digit",
+        hour12: false,
+        timeZone: zone,
+      }).format(at),
+    );
+  } catch {
+    // A bad zone string should cost you an accurate greeting, not the page.
+    return new Date(at).getHours();
+  }
+}
+
+/** The hours you actually work, so "how much of today is left" has meaning. */
+export function workingDay(): { start: number; end: number } {
+  const start = Number(env("THOR_DAY_START"));
+  const end = Number(env("THOR_DAY_END"));
+  return {
+    start: Number.isFinite(start) && start > 0 ? start : 9,
+    end: Number.isFinite(end) && end > 0 ? end : 18,
+  };
+}
+
+/**
+ * Hours left in the working day.
+ *
+ * The difference between an assistant and a list: at four in the afternoon
+ * you do not have six hours, and a plan that assumes you do is a plan you
+ * will not finish. Returns the full day before it starts, and zero after.
+ */
+export function hoursLeftToday(at: number = Date.now()): number {
+  const { start, end } = workingDay();
+  const zone = timeZone();
+
+  let hour: number;
+  let minute: number;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: zone,
+    }).formatToParts(at);
+    hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+    minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  } catch {
+    const date = new Date(at);
+    hour = date.getHours();
+    minute = date.getMinutes();
+  }
+
+  const now = hour + minute / 60;
+  if (now <= start) return end - start;
+  return Math.max(0, end - now);
+}
 
 /** Coordinates for the weather readout, or null when unset. */
 export function coordinates(): { lat: string; lon: string } | null {
@@ -67,9 +155,14 @@ export function coordinates(): { lat: string; lon: string } | null {
 
 export function greeting(hour: number): string {
   if (hour < 5) return "Still up";
+  // Six is not "morning" in the sense the word usually carries, and an
+  // assistant that says "Good morning" at 06:10 to someone who has been up
+  // since five sounds like a script rather than a colleague.
+  if (hour < 8) return "Early start";
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
-  return "Good evening";
+  if (hour < 22) return "Good evening";
+  return "Late one";
 }
 
 /** The greeting with the operator's name, or without it if none is set. */

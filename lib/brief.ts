@@ -26,6 +26,7 @@
  *   information about you, not about the thing.
  */
 
+import { greeting } from "./ambient";
 import { rank, type Advisory } from "./advisory";
 import { candidatesFromCases, type CaseView } from "./cases";
 import {
@@ -73,10 +74,26 @@ export interface BriefRecord {
 export interface BriefInput {
   now: number;
   operator: string;
+  /**
+   * The operator's local hour, 0-23.
+   *
+   * Passed in rather than read from `now`, because the brief is derived
+   * server-side and `new Date(now).getHours()` is the hour wherever the
+   * process runs. A UTC host greeting a UTC+4 operator with "Good evening"
+   * over breakfast is the kind of small wrongness that makes everything else
+   * on the page feel guessed at.
+   */
+  localHour?: number;
   cases: CaseView[];
   products: Product[];
   entries: Entry[];
   capacity: Capacity;
+  /**
+   * Where the capacity numbers came from. Supplied by the caller because only
+   * the caller knows whether the calendar answered, failed, or was never
+   * connected — three states the brief must not collapse into one sentence.
+   */
+  capacityNote?: string;
   history: BriefRecord[];
   weights?: WeightMap;
   context?: Context;
@@ -137,8 +154,8 @@ export interface Brief {
 
 // ── Derivation ───────────────────────────────────────────────────────────
 
-function greeting(hour: number, operator: string): string {
-  const time = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+function greetingFor(hour: number, operator: string): string {
+  const time = greeting(hour);
   return operator ? `${time}, ${operator}.` : `${time}.`;
 }
 
@@ -335,11 +352,12 @@ export function buildBrief(input: BriefInput): Brief {
       : Math.max(0, capacity.plannedHours - capacity.bookedHours);
 
   const note =
-    capacity.bookedHours === null
+    input.capacityNote ??
+    (capacity.bookedHours === null
       ? "No calendar connected, so this is the time you said you had — not time anyone has checked against your day."
       : capacity.bookedHours > capacity.plannedHours * 0.5
         ? `Your calendar already holds ${capacity.bookedHours}h of the ${capacity.plannedHours}h you planned. Most of today is already spoken for.`
-        : `${capacity.bookedHours}h already booked, leaving ${realisticHours}h.`;
+        : `${capacity.bookedHours}h already booked, leaving ${realisticHours}h.`);
 
   const context: Context = {
     ...DEFAULT_CONTEXT,
@@ -448,7 +466,7 @@ export function buildBrief(input: BriefInput): Brief {
             : `${focus.name} is the only product with a release blocker open.`,
         }
       : null,
-    greeting: greeting(new Date(now).getHours(), input.operator),
+    greeting: greetingFor(input.localHour ?? new Date(now).getHours(), input.operator),
     capacity: { plannedHours: capacity.plannedHours, realisticHours, note },
     items,
     committedMinutes: Math.round(committedMinutes),

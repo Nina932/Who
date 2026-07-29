@@ -32,9 +32,18 @@ transcript rail that stamps every reply with the seat it came from.
 **Brief** (`/brief`) — the assistant, and the front door. Your day, derived
 rather than composed: every item traces to a case's turn, a release blocker or
 a dated promise, and carries why it matters, why *today*, and what delaying it
-costs. It states your realistic capacity, shows what it moved out of today and
-which test that work failed, and names anything you have skipped three briefs
+costs. It reads your calendar for what is already booked, caps the plan at
+what is left of your working day, shows what it moved out of today and which
+test that work failed, and names anything you have skipped three briefs
 running.
+
+It also carries the intelligence filter and the six conversational modes.
+Relevance is measured against your current blocker first, your stack second,
+your phase third — a genuinely better model is *evaluate soon*, not *act now*,
+when the thing stopping your release is worker deployment. **That filtering
+needs no API key**: articles are matched against the vocabulary your own
+products already contain. Three interruptions maximum, because a day with
+eleven urgent items has none.
 
 It gives the blocker hour to exactly one product and says why — a day split
 across two stuck products unsticks neither, and scheduling both would
@@ -164,8 +173,14 @@ For the full stack, set the keys and restart. macOS and Linux:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # Opus (judgment), Sonnet (vision), Haiku (memory)
 export GOOGLE_API_KEY=...             # Gemini Flash (quick), Pro (hard)
+export THOR_OPERATOR=Nino             # who the brief greets
+export THOR_TZ=Asia/Tbilisi           # your zone — the brief is derived server-side
 npm run dev
 ```
+
+`THOR_TZ` matters more than it looks. The brief is built on the server, so
+without it the greeting and "hours left today" use the host's clock rather
+than yours.
 
 Windows PowerShell — `export` is not a thing here:
 
@@ -224,7 +239,10 @@ lib/
   advisory.ts           The seven-field shape every recommendation must take
   products.ts           Product phase, blockers, exit conditions, drift rules
   brief.ts              The derived day, the cut, avoidance, horizons
-  signals.ts            Technology and market intelligence, filtered
+  calendar.ts           Booked hours: overlaps merged, all-day ignored
+  signals.ts            Relevance against the constraint; the interruption cap
+  feeds.ts              RSS and Atom, tagged from your own vocabulary
+  modes.ts              Six framings, one truth system
   assistant-store.ts    Assistant persistence (server only)
   cases.ts              Cases, events, the workflow, whose turn it is (pure)
   case-store.ts         Persistence and interpretation (server only)
@@ -257,7 +275,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 217 tests + build, no API keys needed
+npm run verify        # typecheck + 283 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```
@@ -297,9 +315,10 @@ LinkedIn; image generation is wired to Imagen. State runs on the filesystem by
 default or Upstash Redis — with compare-and-set, so several instances can share
 one store.
 
-Not built: nothing writes to the intelligence feed — the filter is real and
-the source is not; no calendar, so capacity says as much rather than assuming
-an empty day; the five loops beyond lead-to-cash; events arriving *from*
+Not built: the feed does not poll itself on a schedule; nothing pushes an
+alert to you, so the interruption gate decides what *would* be worth
+interrupting for and nothing does the interrupting; the default sources cover
+infrastructure rather than buyers; the five loops beyond lead-to-cash; events arriving *from*
 connectors rather than from a person pressing a button; per-counterparty
 calibration of the patience thresholds; Google Chat and WhatsApp; and
 retry/backoff on provider calls. See the end of

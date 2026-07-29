@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { exampleKnowledge, exampleProducts, view } from "../lib/products";
-import { classify, exampleSignals, partition, type Signal } from "../lib/signals";
+import { ALERT_CAP, classify, exampleSignals, partition, type Signal } from "../lib/signals";
 
 /**
  * The value of an intelligence layer is entirely in what it throws away, so
@@ -119,10 +119,52 @@ describe("partition", () => {
     assert.equal(alerts.length + digest.length, all.length);
   });
 
-  it("keeps the alert list small on a normal week", () => {
-    // If everything alerts, nothing does.
-    const { alerts } = partition(exampleSignals(NOW).map((s) => classify(s, products)));
-    assert.ok(alerts.length <= 2, `${alerts.length} alerts is a feed, not a filter`);
+  it("caps interruptions, because attention does not scale", () => {
+    // A day with eleven urgent items has no urgent items.
+    const many = Array.from({ length: 9 }, (_, i) =>
+      classify(
+        signal({ id: `m${i}`, nature: "vulnerability", tags: ["data lineage"], at: NOW - i }),
+        products,
+      ),
+    );
+    const { alerts, pushedDown } = partition(many);
+    assert.equal(alerts.length, ALERT_CAP);
+    assert.equal(pushedDown, 9 - ALERT_CAP);
+  });
+
+  it("keeps the over-cap items urgent rather than downgrading them", () => {
+    // They move into the digest; they do not stop being act-now. Rewriting
+    // the verdict to fit the cap would be lying to make a list fit.
+    const many = Array.from({ length: 5 }, (_, i) =>
+      classify(signal({ id: `m${i}`, nature: "vulnerability", tags: ["data lineage"] }), products),
+    );
+    const { digest } = partition(many);
+    assert.ok(digest.some((d) => d.verdict === "act-now"));
+  });
+
+  it("reports nothing pushed down when nothing was", () => {
+    const { pushedDown } = partition(exampleSignals(NOW).map((s) => classify(s, products)));
+    assert.equal(pushedDown, 0);
+  });
+});
+
+describe("the operator reads names, not ids", () => {
+  it("never leaks a product id into a reason", () => {
+    // "affecting g8" is the kind of leak that tells you a sentence was
+    // assembled rather than written.
+    for (const classified of exampleSignals(NOW).map((s) => classify(s, products))) {
+      for (const product of products) {
+        assert.ok(
+          !classified.because.includes(` ${product.id}`),
+          `leaked "${product.id}": ${classified.because}`,
+        );
+      }
+    }
+  });
+
+  it("names the product in a forcing-nature reason", () => {
+    const dep = classify(signal({ nature: "deprecation", tags: ["sandbox isolation"] }), products);
+    assert.match(dep.because, /G8/);
   });
 });
 

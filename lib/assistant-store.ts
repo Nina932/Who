@@ -7,8 +7,14 @@
  * there is one derivation, not two.
  */
 
+import { hoursLeftToday, localHour } from "./ambient";
 import { buildBrief, type Brief, type BriefRecord, type Capacity } from "./brief";
+import { bookedHoursIn, toBusy } from "./calendar";
 import { caseViews } from "./case-store";
+import { listCalendarEvents } from "./connectors";
+import { merge, poll, type PollResult } from "./feeds";
+import { contextFor, systemPromptFor, unphrasedAnswer, type ModeId, type TruthInput } from "./modes";
+import { callRole } from "./models";
 import { validate, type Entry } from "./knowledge";
 import { exampleKnowledge, exampleProducts, type Blocker, type Product } from "./products";
 import { classify, exampleSignals, partition, type Classified, type Signal } from "./signals";
@@ -133,9 +139,46 @@ export interface AssistantState {
   brief: Brief;
   alerts: Classified[];
   digest: Classified[];
+  /** Urgent items that exceeded the interruption cap. Never silently dropped. */
+  pushedDown: number;
   entries: Entry[];
   /** Evidence-chain violations found in the stored knowledge, if any. */
   problems: string[];
+  /** Where the booked hours came from, so the number is never anonymous. */
+  calendar: { connected: boolean; bookedHours: number | null; note: string };
+}
+
+/**
+ * Read today's remaining calendar rather than assuming an empty day.
+ *
+ * Measured against the window between now and the end of the working day,
+ * because what matters is not how long today's meetings are but how much of
+ * the time you have left is already spoken for. A calendar that cannot be
+ * reached returns null and says why — the brief then reports uncertainty
+ * instead of inventing an empty afternoon.
+ */
+async function readCalendar(
+  now: number,
+): Promise<{ connected: boolean; bookedHours: number | null; note: string }> {
+  const result = await listCalendarEvents(1);
+
+  if (!result.ok) {
+    return {
+      connected: false,
+      bookedHours: null,
+      note: result.needsConnection
+        ? "Calendar not connected."
+        : `Calendar unreachable: ${result.error ?? "unknown error"}.`,
+    };
+  }
+
+  const windowEnd = now + hoursLeftToday(now) * 3_600_000;
+  const hours = bookedHoursIn(toBusy(result.data), now, windowEnd);
+  return {
+    connected: true,
+    bookedHours: hours,
+    note: `Read from your calendar: ${hours}h booked between now and the end of your day.`,
+  };
 }
 
 export async function assistantState(
@@ -151,29 +194,150 @@ export async function assistantState(
     getCapacity(),
   ]);
 
+  // A real reading replaces the stored guess whenever one is available.
+  const calendar = await readCalendar(now);
+  const effective: Capacity = {
+    // Never plan more hours than the working day has left in it. At four in
+    // the afternoon you do not have six hours, and a brief that says you do
+    // is one you will not finish.
+    plannedHours: Math.min(capacity.plannedHours, Math.max(0, hoursLeftToday(now))),
+    bookedHours: calendar.connected ? calendar.bookedHours : capacity.bookedHours,
+  };
+
+  // Built here because only this layer knows all three pieces: whether the
+  // calendar answered, how much of the working day is left, and what the
+  // operator said they would give.
+  const left = hoursLeftToday(now);
+  const shortened = left < capacity.plannedHours;
+  const capacityNote = [
+    calendar.connected
+      ? `${calendar.bookedHours}h of what remains is already booked.`
+      : calendar.note.startsWith("Calendar not")
+        ? "No calendar connected, so nothing has checked this against your actual day."
+        : calendar.note,
+    shortened
+      ? `Only ${Math.round(left * 10) / 10}h of your working day is left, so the ${capacity.plannedHours}h you planned is not on offer.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const brief = buildBrief({
     now,
     operator,
+    localHour: localHour(now),
+    capacityNote,
     cases,
     products,
     entries,
-    capacity,
+    capacity: effective,
     history,
   });
 
   const views = products.map((p) => productView(p, entries, now));
   const classified = signals.map((s) => classify(s, views));
-  const { alerts, digest } = partition(classified);
+  const { alerts, digest, pushedDown } = partition(classified);
 
   return {
     brief,
     alerts,
     digest,
+    pushedDown,
     entries,
     // Surfaced rather than thrown: a corrupt chain is a thing the operator
     // needs to know about, not an exception that hides the whole screen.
     problems: validate(entries).map((p) => `${p.entryId}: ${p.message}`),
+    calendar,
   };
+}
+
+// ── The feed ─────────────────────────────────────────────────────────────
+
+/**
+ * Poll every configured source and keep only what touches this business.
+ *
+ * Filtering happens at ingestion. A store that accumulates every headline is
+ * a news database, and the first time it is slow the temptation is to show it
+ * unfiltered.
+ */
+export async function pollFeeds(now = Date.now()): Promise<PollResult[]> {
+  const [products, entries] = await Promise.all([allProducts(), allEntries()]);
+  const views = products.map((p) => productView(p, entries, now));
+
+  if (views.filter((v) => v.active).length === 0) {
+    return [
+      {
+        source: "—",
+        ok: false,
+        found: 0,
+        kept: 0,
+        error: "No active products, so there is no vocabulary to match against.",
+      },
+    ];
+  }
+
+  const { signals, results } = await poll(views, now);
+  await mutate<Signal[], null>(SIGNALS, [], (current) => ({
+    next: merge(current, signals),
+    result: null,
+  }));
+  return results;
+}
+
+// ── Modes ────────────────────────────────────────────────────────────────
+
+export interface Answer {
+  mode: ModeId;
+  text: string;
+  /** False when no model phrased it — the state is returned instead. */
+  live: boolean;
+  /** Always returned, so the answer can be checked against its own basis. */
+  context: string;
+  model?: string;
+}
+
+/**
+ * Ask one mode a question.
+ *
+ * The model is handed the derived state and forbidden from adding to it. With
+ * no key the assembled context comes back verbatim with a plain statement
+ * that nothing phrased it — degrading to *less fluent*, never to *made up*.
+ */
+export async function ask(
+  mode: ModeId,
+  question: string,
+  operator: string,
+  now = Date.now(),
+): Promise<Answer> {
+  const state = await assistantState(operator, now);
+  const [products, entries] = await Promise.all([allProducts(), allEntries()]);
+
+  const truth: TruthInput = {
+    brief: state.brief,
+    products: products.map((p) => productView(p, entries, now)),
+    entries,
+    alerts: state.alerts,
+    digest: state.digest,
+    now,
+  };
+
+  const context = contextFor(mode, truth);
+
+  const result = await callRole("hard", {
+    system: systemPromptFor(mode),
+    messages: [{ role: "user", content: `CURRENT STATE:\n\n${context}\n\n---\n\nQUESTION: ${question}` }],
+  });
+
+  if (!result.live) {
+    return {
+      mode,
+      live: false,
+      context,
+      text: unphrasedAnswer(mode, context, result.error ?? "No model available."),
+    };
+  }
+
+  return { mode, live: true, context, text: result.text, model: result.spec.label };
 }
 
 /**

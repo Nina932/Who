@@ -21,6 +21,7 @@ import type { Advisory } from "@/lib/advisory";
 import type { Brief } from "@/lib/brief";
 import type { Entry } from "@/lib/knowledge";
 import type { Product } from "@/lib/products";
+import { MODES, type ModeId } from "@/lib/modes";
 import { VERDICT_LABEL, VERDICT_MEANING, type Classified } from "@/lib/signals";
 
 interface State {
@@ -30,7 +31,18 @@ interface State {
   entries: Entry[];
   products: Product[];
   problems: string[];
+  pushedDown: number;
   capacity: { plannedHours: number; bookedHours: number | null };
+  calendar: { connected: boolean; bookedHours: number | null; note: string };
+  poll?: Array<{ source: string; ok: boolean; found: number; kept: number; error?: string }>;
+}
+
+interface Answer {
+  mode: ModeId;
+  text: string;
+  live: boolean;
+  context: string;
+  model?: string;
 }
 
 const CONFIDENCE_COLOR: Record<string, string> = {
@@ -52,6 +64,11 @@ export default function BriefPage() {
   const [busy, setBusy] = useState(false);
   const [openAdvisory, setOpenAdvisory] = useState<string | null>(null);
   const [showDigest, setShowDigest] = useState(false);
+  const [poll, setPoll] = useState<State["poll"] | null>(null);
+  const [mode, setMode] = useState<ModeId>("daily-operator");
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [showContext, setShowContext] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -74,11 +91,31 @@ export default function BriefPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (response.ok) setState((await response.json()) as State);
+      if (response.ok) {
+        const next = (await response.json()) as State;
+        setState(next);
+        if (next.poll) setPoll(next.poll);
+      }
     } finally {
       setBusy(false);
     }
   }, []);
+
+  const askMode = useCallback(async (question: string) => {
+    setAsking(true);
+    setAnswer(null);
+    try {
+      const response = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "ask", mode, question }),
+      });
+      const body = (await response.json()) as { answer?: Answer };
+      if (body.answer) setAnswer(body.answer);
+    } finally {
+      setAsking(false);
+    }
+  }, [mode]);
 
   if (!state) {
     return (
@@ -91,7 +128,7 @@ export default function BriefPage() {
     );
   }
 
-  const { brief, alerts, digest, products, problems } = state;
+  const { brief, alerts, digest, products, problems, pushedDown } = state;
   const empty = brief.items.length === 0 && products.length === 0;
 
   return (
@@ -274,14 +311,33 @@ export default function BriefPage() {
             <section className="mt-9">
               <div className="flex items-baseline justify-between gap-4">
                 <div className="label-lit">Worth interrupting you for · {alerts.length}</div>
-                <button
-                  type="button"
-                  onClick={() => setShowDigest((v) => !v)}
-                  className="label transition-colors hover:text-[color:var(--color-signal)]"
-                >
-                  {showDigest ? "hide" : `digest · ${digest.length}`}
-                </button>
+                <div className="flex items-baseline gap-4">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void act({ action: "poll-feeds" })}
+                    className="label transition-colors hover:text-[color:var(--color-signal)] disabled:opacity-40"
+                  >
+                    {busy ? "polling…" : "poll feeds"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDigest((v) => !v)}
+                    className="label transition-colors hover:text-[color:var(--color-signal)]"
+                  >
+                    {showDigest ? "hide" : `digest · ${digest.length}`}
+                  </button>
+                </div>
               </div>
+
+              {/* Never silently truncate a list of things called urgent. */}
+              {pushedDown > 0 ? (
+                <p className="mt-2 text-[12px]" style={{ color: "var(--color-attend)" }}>
+                  {pushedDown} more item{pushedDown === 1 ? " is" : "s are"} also act-now
+                  and sitting in the digest. Three is the most that can be put in front of
+                  you at once — a day with eleven urgent items has none.
+                </p>
+              ) : null}
 
               {alerts.length === 0 ? (
                 <p className="mt-3 text-[13px]" style={{ color: "var(--color-ink-soft)" }}>
@@ -295,6 +351,26 @@ export default function BriefPage() {
                   ))}
                 </ul>
               )}
+
+              {/* Per source. A dead feed is named rather than folded into a
+                  silent "nothing new" — which is indistinguishable from a
+                  quiet week, and is how every feed reader ends up lying. */}
+              {poll ? (
+                <ul className="mt-4 space-y-1">
+                  {poll.map((row) => (
+                    <li key={row.source} className="flex flex-wrap items-baseline gap-x-3">
+                      <span className="label" style={{ color: row.ok ? "var(--color-ink-soft)" : "var(--color-alert)" }}>
+                        {row.source}
+                      </span>
+                      <span className="label">
+                        {row.ok
+                          ? `${row.found} items, ${row.kept} touched your stack`
+                          : `unreachable — ${row.error}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
 
               {showDigest ? (
                 <ul className="mt-3 space-y-2.5">
@@ -332,6 +408,102 @@ export default function BriefPage() {
                 </p>
               </section>
             ) : null}
+
+            {/* ── Modes ─────────────────────────────────────────────── */}
+            <section className="mt-9">
+              <div className="label-lit">Ask</div>
+              <p className="mt-2 max-w-[70ch] text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+                Six framings, one truth system. A mode changes which slice of the
+                derived state it is handed and what it may not do with it — never
+                where the state comes from, so two modes cannot disagree about a fact.
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setMode(m.id);
+                      setAnswer(null);
+                    }}
+                    title={m.refuses}
+                    className="chip px-3 py-1.5 label transition-colors"
+                    style={{ color: mode === m.id ? "var(--color-signal)" : undefined }}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-3 text-[12px]" style={{ color: "var(--color-ink-soft)" }}>
+                {MODES.find((m) => m.id === mode)?.question}{" "}
+                <span style={{ color: "var(--color-ink-faint)" }}>
+                  {MODES.find((m) => m.id === mode)?.refuses}
+                </span>
+              </p>
+
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const input = e.currentTarget.elements.namedItem("q") as HTMLInputElement;
+                  const question = input.value.trim() || (MODES.find((m) => m.id === mode)?.question ?? "");
+                  void askMode(question);
+                }}
+              >
+                <input
+                  name="q"
+                  placeholder={MODES.find((m) => m.id === mode)?.question}
+                  className="chip flex-1 px-3 py-2 text-[12px] outline-none"
+                  style={{ color: "var(--color-ink)", background: "transparent" }}
+                />
+                <button type="submit" disabled={asking} className="chip px-4 py-2 label disabled:opacity-40">
+                  {asking ? "thinking…" : "ask"}
+                </button>
+              </form>
+
+              {answer ? (
+                <div className="panel mt-4 rounded-xl p-5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-3">
+                    <span className="label-lit">
+                      {MODES.find((m) => m.id === answer.mode)?.name}
+                    </span>
+                    <span className="label" style={{ color: answer.live ? "var(--color-alive)" : "var(--color-attend)" }}>
+                      {answer.live ? answer.model : "no model — showing the state instead"}
+                    </span>
+                  </div>
+                  <p
+                    className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed"
+                    style={{ color: "var(--color-ink-soft)" }}
+                  >
+                    {answer.text}
+                  </p>
+
+                  {/* The answer's own basis, always available. An answer you
+                      cannot check against its inputs is one you have to trust. */}
+                  {answer.live ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowContext((v) => !v)}
+                        className="label mt-4 transition-colors hover:text-[color:var(--color-signal)]"
+                      >
+                        {showContext ? "hide what it was given" : "what it was given"}
+                      </button>
+                      {showContext ? (
+                        <pre
+                          className="mt-3 max-h-[380px] overflow-auto whitespace-pre-wrap border-t pt-3 text-[11px] leading-relaxed"
+                          style={{ borderColor: "rgba(62,194,255,0.15)", color: "var(--color-ink-faint)" }}
+                        >
+                          {answer.context}
+                        </pre>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
 
             <div className="mt-9 flex flex-wrap gap-2">
               <button

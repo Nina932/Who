@@ -99,6 +99,9 @@ function surfaceOf(product: ProductView) {
 
 export function classify(signal: Signal, products: ProductView[]): Classified {
   const affects: string[] = [];
+  // Ids are for code; the operator reads names. "affecting g8" is the kind of
+  // leak that tells you a sentence was assembled rather than written.
+  const names: string[] = [];
   let touchesBlocker: string | null = null;
   let touchesStack = false;
   let touchesObjective = false;
@@ -111,7 +114,10 @@ export function classify(signal: Signal, products: ProductView[]): Classified {
     const stackHit = surface.stack.some((name) => mentions(name, signal.tags));
     const objectiveHit = mentions(surface.objective, signal.tags);
 
-    if (blockerHit || stackHit || objectiveHit) affects.push(product.id);
+    if (blockerHit || stackHit || objectiveHit) {
+      affects.push(product.id);
+      names.push(product.name);
+    }
     if (blockerHit && !touchesBlocker) touchesBlocker = `${product.name}: ${blockerHit}`;
     touchesStack = touchesStack || stackHit;
     touchesObjective = touchesObjective || objectiveHit;
@@ -123,7 +129,7 @@ export function classify(signal: Signal, products: ProductView[]): Classified {
     return {
       signal,
       verdict: "act-now",
-      because: `A ${signal.nature} affecting ${affects.join(", ")}. This does not wait for the right phase.`,
+      because: `A ${signal.nature} affecting ${names.join(", ")}. This does not wait for the right phase.`,
       affects,
       touchesBlocker,
     };
@@ -159,7 +165,7 @@ export function classify(signal: Signal, products: ProductView[]): Classified {
       return {
         signal,
         verdict: "evaluate-soon",
-        because: `Relevant to ${affects.join(", ")}, but your current blocker is ${blocked[0].releaseBlockers[0].name} — not this. Worth a look once that clears.`,
+        because: `Relevant to ${names.join(", ")}, but your current blocker is ${blocked[0].releaseBlockers[0].name} — not this. Worth a look once that clears.`,
         affects,
         touchesBlocker,
       };
@@ -167,7 +173,7 @@ export function classify(signal: Signal, products: ProductView[]): Classified {
     return {
       signal,
       verdict: "evaluate-soon",
-      because: `It touches ${affects.join(", ")} and nothing is currently gating you, so it can be assessed on its merits.`,
+      because: `It touches ${names.join(", ")} and nothing is currently gating you, so it can be assessed on its merits.`,
       affects,
       touchesBlocker,
     };
@@ -193,18 +199,40 @@ export function classify(signal: Signal, products: ProductView[]): Classified {
   };
 }
 
-/** Alerts versus a digest. Only `act-now` earns an interruption. */
-export function partition(classified: Classified[]): {
+/**
+ * How many things may interrupt you at once.
+ *
+ * A hard cap, because "act now" is not a property of a signal — it is a claim
+ * on your attention, and attention does not scale. A day with eleven urgent
+ * items has no urgent items. Anything over the cap drops to the digest, and
+ * `pushedDown` says how many, because silently truncating a list of things
+ * described as urgent would be the worst possible failure here.
+ */
+export const ALERT_CAP = 3;
+
+export function partition(
+  classified: Classified[],
+  cap = ALERT_CAP,
+): {
   alerts: Classified[];
   digest: Classified[];
+  /** Act-now items that exceeded the cap and were moved into the digest. */
+  pushedDown: number;
 } {
   const order: Verdict[] = ["act-now", "evaluate-soon", "watch", "ignore-for-now"];
   const sorted = [...classified].sort(
     (a, b) => order.indexOf(a.verdict) - order.indexOf(b.verdict) || b.signal.at - a.signal.at,
   );
+
+  const urgent = sorted.filter((c) => c.verdict === "act-now");
+  const rest = sorted.filter((c) => c.verdict !== "act-now");
+
   return {
-    alerts: sorted.filter((c) => c.verdict === "act-now"),
-    digest: sorted.filter((c) => c.verdict !== "act-now"),
+    alerts: urgent.slice(0, cap),
+    // Overflow keeps its act-now verdict in the digest — it is still urgent,
+    // it just is not one of the three things being put in front of you.
+    digest: [...urgent.slice(cap), ...rest],
+    pushedDown: Math.max(0, urgent.length - cap),
   };
 }
 
