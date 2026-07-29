@@ -1,21 +1,22 @@
 "use client";
 
 /**
- * The week.
+ * The week — human-capacity allocation over actions already derived elsewhere.
  *
- * Everything competing for your attention, scored on factors you can see,
- * weighted by dials you control, cut to the hours you actually have — and then
- * told plainly what those weights are optimising for.
+ * This page ranks; it does not decide what exists. Its candidates come from
+ * cases moving through the lead-to-cash workflow and from loops holding at
+ * their gates, both of which were produced by events rather than by anyone
+ * writing a list. That ordering matters: a prioritiser fed by hand is a
+ * prioritiser of whatever you happened to remember.
  *
- * The last part is the point. Ranking a list is easy and most tools stop
- * there. What nobody notices is that the same list, ranked the same way, has
- * produced a year of urgent weeks in which nothing compounded. That is what
- * the verdict is for.
+ * What it adds on top is the verdict. Ranking a list is easy and most tools
+ * stop there. What nobody notices is that the same list, ranked the same way,
+ * has produced a year of urgent weeks in which nothing compounded.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import NyxCoreMark from "@/components/brand/NyxCoreMark";
+import { SurfaceHeader } from "@/components/cases/parts";
+import { candidatesFromCases, type CaseView } from "@/lib/cases";
 import {
   DEFAULT_CONTEXT,
   DEFAULT_WEIGHTS,
@@ -96,16 +97,21 @@ export default function WeekPage() {
   const [weights, setWeights] = useState<WeightMap>({ ...DEFAULT_WEIGHTS });
   const [context, setContext] = useState<Context>({ ...DEFAULT_CONTEXT });
   const [live, setLive] = useState<LoopsPayload | null>(null);
+  const [cases, setCases] = useState<CaseView[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  // Real work from the Loops Engine joins the sample week rather than
-  // replacing it, so the page is useful before any loop has ever run.
   const load = useCallback(async () => {
-    try {
-      const response = await fetch("/api/loops", { cache: "no-store" });
-      if (response.ok) setLive((await response.json()) as LoopsPayload);
-    } catch {
-      /* the sample week still stands on its own */
+    const [loops, ledger] = await Promise.allSettled([
+      fetch("/api/loops", { cache: "no-store" }),
+      fetch("/api/cases", { cache: "no-store" }),
+    ]);
+    if (loops.status === "fulfilled" && loops.value.ok) {
+      setLive((await loops.value.json()) as LoopsPayload);
+    }
+    if (ledger.status === "fulfilled" && ledger.value.ok) {
+      setCases(((await ledger.value.json()) as { cases: CaseView[] }).cases);
+    } else {
+      setCases([]);
     }
   }, []);
 
@@ -113,11 +119,22 @@ export default function WeekPage() {
     void load();
   }, [load]);
 
-  const candidates = useMemo(() => {
-    if (!live) return SAMPLE_CANDIDATES;
+  /**
+   * Derived work first, always. The sample week appears only when there is
+   * genuinely nothing real to rank — a prioritiser silently mixing invented
+   * candidates into your actual commitments would be worse than useless.
+   */
+  const fromCases = useMemo(() => (cases ? candidatesFromCases(cases) : []), [cases]);
+
+  const fromLoops = useMemo(() => {
+    if (!live) return [];
     const names = Object.fromEntries(live.loops.map((l) => [l.id, l.name]));
-    return [...candidatesFromRuns(live.runs, names), ...SAMPLE_CANDIDATES];
+    return candidatesFromRuns(live.runs, names);
   }, [live]);
+
+  const real = useMemo(() => [...fromCases, ...fromLoops], [fromCases, fromLoops]);
+  const usingSample = cases !== null && real.length === 0;
+  const candidates = usingSample ? SAMPLE_CANDIDATES : real;
 
   const ranked = useMemo(
     () => rankWeek(candidates, weights, context),
@@ -131,38 +148,34 @@ export default function WeekPage() {
   return (
     <main className="h-screen w-screen overflow-y-auto">
       <div className="mx-auto max-w-[1180px] px-8 pb-24 pt-6">
-        <div className="relative mb-7 h-px w-full overflow-hidden">
-          <div className="aurora-rule absolute inset-0 opacity-50" />
-        </div>
+        <SurfaceHeader
+          title="The week"
+          right={
+            <span className="label">
+              {candidates.length} competing · {context.capacityHours}h available
+            </span>
+          }
+        />
 
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]">
-              ← Thor
-            </Link>
-            <NyxCoreMark size={30} detail={false} />
-            <h1
-              className="aurora uppercase"
-              style={{
-                fontSize: 15,
-                letterSpacing: "0.28em",
-                fontFamily: "var(--font-display)",
-              }}
-            >
-              The week
-            </h1>
-          </div>
-          <span className="label">
-            {candidates.length} competing · {context.capacityHours}h available
-          </span>
-        </div>
-
-        <p className="mt-5 max-w-[70ch] text-[13px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
+        <p className="mt-6 max-w-[70ch] text-[13px] leading-relaxed" style={{ color: "var(--color-ink-soft)" }}>
           Your week has more candidates than hours, so something ranks them.
           Left alone that something is whatever shouted loudest this morning.
           This makes the ranking explicit — and then tells you what it is
           actually optimising for.
         </p>
+
+        {usingSample ? (
+          <p className="mt-3 max-w-[70ch] text-[12px]" style={{ color: "var(--color-attend)" }}>
+            No open cases and no loops at a gate, so this is a worked example
+            week — none of it is yours. Open a case and it is replaced entirely.
+          </p>
+        ) : (
+          <p className="mt-3 max-w-[70ch] text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+            {fromCases.length} derived from open cases · {fromLoops.length} from
+            loops holding at a gate. Waiting and blocked work is excluded — it
+            is tracked, and tracking is not doing.
+          </p>
+        )}
 
         {/* The verdict, first, because it is the part worth reading. */}
         <section className="mt-8">

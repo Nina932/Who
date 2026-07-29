@@ -171,27 +171,26 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
             {now ? greetingLine(now.getHours(), ambient?.operator ?? "") : "Standing by"}
           </div>
 
-          <nav className="pointer-events-auto mt-4 flex items-center justify-end gap-2">
+          <nav className="pointer-events-auto mt-4 flex flex-wrap items-center justify-end gap-2">
             <span className="chip px-3 py-1.5 label-lit">Overview</span>
-            <Link
-              href="/social"
-              className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
-            >
-              Social command center
-            </Link>
-            <Link
-              href="/loops"
-              className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
-            >
-              Loops
-            </Link>
-            <Link
-              href="/week"
-              className="chip-attend px-3 py-1.5 label transition-colors"
-              style={{ color: "var(--color-attend)" }}
-            >
-              The week
-            </Link>
+            {/* The operational surfaces, in the order they answer questions:
+                what's mine, what exists, who's holding what, what fits. */}
+            {[
+              ["/today", "Today"],
+              ["/cases", "Cases"],
+              ["/waiting", "Waiting"],
+              ["/week", "The week"],
+              ["/loops", "Loops"],
+              ["/social", "Social"],
+            ].map(([href, label]) => (
+              <Link
+                key={href}
+                href={href}
+                className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
+              >
+                {label}
+              </Link>
+            ))}
             <Link
               href="/connect"
               className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"

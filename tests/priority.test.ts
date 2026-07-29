@@ -171,6 +171,16 @@ describe("verdict", () => {
     assert.match(v.headline, /compounds|reactive/i);
   });
 
+  it("calls idle capacity a pipeline problem rather than staying quiet", () => {
+    // The state a case-driven week actually lands in: plenty of hours, almost
+    // nothing derived to spend them on because everything is with someone
+    // else. Reporting that as a tidy short week would be the wrong reading.
+    const context = { ...DEFAULT_CONTEXT, capacityHours: 24 };
+    const thin = SAMPLE_CANDIDATES.filter((c) => c.id === "c-invoice");
+    const v = verdict(rankWeek(thin, DEFAULT_WEIGHTS, context), context);
+    assert.match(v.headline, /pipeline problem/);
+  });
+
   it("says so plainly when nothing clears the bar", () => {
     const ranked = rankWeek(SAMPLE_CANDIDATES, DEFAULT_WEIGHTS, {
       ...DEFAULT_CONTEXT,

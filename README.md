@@ -5,10 +5,12 @@ reconstruction of the product Reznikov Engineering demonstrates publicly as
 Apex — *"the autonomous AI co-founder that learns, runs, and scales your solo
 business."* Their product is Apex; this implementation is Thor.
 
-Two docs sit behind this: **[`docs/APEX-TEARDOWN.md`](docs/APEX-TEARDOWN.md)**
-for the product analysis, and **[`docs/ENGINE.md`](docs/ENGINE.md)** for what
-actually runs — the model stack, the Loops Engine, memory and style learning,
-with the end-to-end transcripts that verify each one.
+Three docs sit behind this: **[`docs/CASES.md`](docs/CASES.md)** for the
+operational core — cases, events, whose turn it is;
+**[`docs/APEX-TEARDOWN.md`](docs/APEX-TEARDOWN.md)** for the product analysis;
+and **[`docs/ENGINE.md`](docs/ENGINE.md)** for what actually runs — the model
+stack, the Loops Engine, memory and style learning, with the end-to-end
+transcripts that verify each one.
 
 ![The cockpit with a specialist attending](docs/screenshots/overview-attendance.png)
 
@@ -24,6 +26,37 @@ trying to delegate.
 **Overview** — one full-bleed canvas. A live core with eighteen agents in orbit,
 ambient context (clock, weather, greeting, almanac), three status lamps, and a
 transcript rail that stamps every reply with the seat it came from.
+
+**Cases** (`/cases`, `/today`, `/waiting`) — the operational core, and the
+thing the rest of the product now sits on top of. A **case** is one commitment
+carried from the first message to the money landing. It has no stored state:
+it is projected from its event log every time it is read, so the past is
+queryable and nothing can be edited into an inconsistent position.
+
+Every case is somebody's turn — yours, theirs, the system's, a date's, blocked
+or done. *Their turn is not idle.* Every waiting stage carries a patience
+threshold, and when that runs out the turn comes back to you with an escalation
+action attached. That single rule is the difference between a system that
+tracks work and one that maintains continuity. Full write-up in
+**[`docs/CASES.md`](docs/CASES.md)**.
+
+**The week** (`/week`) — human-capacity allocation over the actions cases and
+loops have already derived. It ranks; it does not decide what exists. Waiting
+and blocked work is excluded, because tracking is not doing.
+
+The part with teeth is the verdict at the top: *what your weights are actually
+optimising for.* Ranking a list is easy and most tools stop there. What nobody
+notices is that the same list, ranked the same way, produces a year of urgent
+weeks in which nothing compounded — so it says so. And when the derived work
+does not fill the week it says that too, which is a finding rather than a gap:
+
+> 22 of your 24 hours have nothing to do in them. Everything else is with
+> someone else — that is a pipeline problem, not a scheduling one.
+
+The scoring machinery came from an interactive teardown of X's For You
+algorithm, which was removed: it was genuinely useful machinery attached to
+the wrong subject. The analysis survives as
+**[`docs/PHOENIX-TEARDOWN.md`](docs/PHOENIX-TEARDOWN.md)**.
 
 **Specialist Attendance** — the orchestrator scores each utterance against every
 agent's routing vocabulary, calls in the winner, consults near-scorers in the
@@ -44,23 +77,6 @@ for you.
 each step runs on its assigned model, the run halts at a human review gate, and
 rejections and outcomes are turned into learnings that are injected into the
 next run. Weekly Business Review and Content Engine are seeded.
-
-**The week** (`/week`) — the attention engine. Everything competing for your
-week, scored on factors you can see, weighted by dials you control, cut to the
-hours you actually have. Loops holding at their gates join the list
-automatically.
-
-The part with teeth is the verdict at the top: *what your weights are actually
-optimising for.* Ranking a list is easy and most tools stop there. What nobody
-notices is that the same list, ranked the same way, produces a year of urgent
-weeks in which nothing compounded — so it says so. Open any item to see exactly
-which factors put it where.
-
-This replaced an interactive teardown of X's For You algorithm. The ranking
-machinery was genuinely useful; the subject matter belonged to a different
-product. The analysis survives as
-**[`docs/PHOENIX-TEARDOWN.md`](docs/PHOENIX-TEARDOWN.md)**, which is where the
-idea of showing a scorer's blind spot came from.
 
 ## Getting it on your machine
 
@@ -154,12 +170,17 @@ vendor-prefixed elsewhere). Everything degrades to the typed path.
 ```
 app/
   page.tsx              Overview cockpit (react-three-fiber)
+  today/page.tsx        What is genuinely yours, and why
+  cases/page.tsx        The ledger, the stage rail, and every write
+  waiting/page.tsx      Who is holding what, with the clock on it
+  week/page.tsx         Allocation under an hours budget, and the verdict
   loops/page.tsx        Loops Engine workspace
   social/page.tsx       Social Command Center
-  week/page.tsx         The attention engine — rank, cut, and the verdict
   connect/page.tsx      Connector status, OAuth, live probes
+  api/cases/route.ts    The case ledger — reads project, writes append
   api/thor/route.ts     Orchestrator: attendance + routing + memory
 components/
+  cases/                Turn and risk chips, the shared loader
   thor/CockpitScene.tsx 3D cockpit: nebula, displaced core, orbits, bloom
   thor/shaders.ts       GLSL for the sky and the core
   HudHeader.tsx         Ambient context and status lamps
@@ -170,6 +191,8 @@ components/
   AgentInspector.tsx    Per-agent charter and routing vocabulary
   social/               Platform cards, goal loop pipelines
 lib/
+  cases.ts              Cases, events, the workflow, whose turn it is (pure)
+  case-store.ts         Persistence and interpretation (server only)
   priority.ts           Factors, context, ranking under an hours budget
   models.ts             The stack: Flash / Pro / Opus / Sonnet / Haiku + routing
   loops.ts              Loops Engine — executor, review gate, learnings
@@ -199,7 +222,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 77 tests + build, no API keys needed
+npm run verify        # typecheck + 122 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```
@@ -223,7 +246,8 @@ routing bug on their first run — see [`docs/ENGINE.md`](docs/ENGINE.md#tests).
 
 ## Status
 
-Working: the model stack and routing, the Loops Engine (execution, gates,
+Working: the case ledger (event-sourced, with the turn model and the patience
+policy), the model stack and routing, the Loops Engine (execution, gates,
 learnings), the scheduler, Google connectors (Drive, Calendar, Gmail) over a
 real OAuth flow, durable memory, style learning, persistence, and write
 protection on every mutating endpoint.
@@ -236,5 +260,8 @@ LinkedIn; image generation is wired to Imagen. State runs on the filesystem by
 default or Upstash Redis — with compare-and-set, so several instances can share
 one store.
 
-Not built: Google Chat and WhatsApp, and retry/backoff on provider calls. See
-the end of [`docs/ENGINE.md`](docs/ENGINE.md).
+Not built: the five loops beyond lead-to-cash; events arriving *from*
+connectors rather than from a person pressing a button; per-counterparty
+calibration of the patience thresholds; Google Chat and WhatsApp; and
+retry/backoff on provider calls. See the end of
+[`docs/CASES.md`](docs/CASES.md) and of [`docs/ENGINE.md`](docs/ENGINE.md).

@@ -153,7 +153,15 @@ export function effectiveWeights(weights: WeightMap, context: Context): WeightMa
 
 // ── Candidates ───────────────────────────────────────────────────────────
 
-export type CandidateSource = "loop" | "pipeline" | "delivery" | "cash" | "admin" | "manual";
+export type CandidateSource =
+  | "loop"
+  | "inbound"
+  | "pipeline"
+  | "delivery"
+  | "cash"
+  | "content"
+  | "admin"
+  | "manual";
 
 export interface Candidate {
   id: string;
@@ -169,9 +177,11 @@ export interface Candidate {
 
 export const SOURCE_LABEL: Record<CandidateSource, string> = {
   loop: "Loop",
+  inbound: "Inbound",
   pipeline: "Pipeline",
   delivery: "Delivery",
   cash: "Cash",
+  content: "Content",
   admin: "Admin",
   manual: "Added by you",
 };
@@ -407,16 +417,24 @@ export function verdict(ranked: Scored[], context: Context): Verdict {
     }
   }
 
+  // Slack is a finding, not a gap in the data. When the derived work only
+  // fills a fraction of the week, the constraint is not hours — it is that
+  // there is not enough live work, and no amount of reprioritising fixes that.
+  const idle = context.capacityHours - committedHours;
+  const mostlyIdle = chosen.length > 0 && idle > context.capacityHours * 0.5;
+
   const headline =
     chosen.length === 0
       ? "Nothing cleared the bar. Either the weights are too harsh or the week is genuinely empty."
-      : mix.compounding < 0.15
-        ? `Only ${Math.round(mix.compounding * 100)}% of this week compounds. It will pay off and leave you exactly where you started.`
-        : mix.time > 0.45
-          ? `${Math.round(mix.time * 100)}% of this week is driven by deadlines rather than value. That is a reactive week, whoever set the deadlines.`
-          : mix.money > 0.5
-            ? `This week is ${Math.round(mix.money * 100)}% money and obligation — correct under pressure, unsustainable as a habit.`
-            : `A balanced week: ${Math.round(mix.compounding * 100)}% of it compounds.`;
+      : mostlyIdle
+        ? `${Math.round(idle)} of your ${Math.round(context.capacityHours)} hours have nothing to do in them. Everything else is with someone else — that is a pipeline problem, not a scheduling one.`
+          : mix.compounding < 0.15
+            ? `Only ${Math.round(mix.compounding * 100)}% of this week compounds. It will pay off and leave you exactly where you started.`
+            : mix.time > 0.45
+              ? `${Math.round(mix.time * 100)}% of this week is driven by deadlines rather than value. That is a reactive week, whoever set the deadlines.`
+              : mix.money > 0.5
+                ? `This week is ${Math.round(mix.money * 100)}% money and obligation — correct under pressure, unsustainable as a habit.`
+                : `A balanced week: ${Math.round(mix.compounding * 100)}% of it compounds.`;
 
   return { committedHours, capacityHours: context.capacityHours, mix, headline };
 }
