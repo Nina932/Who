@@ -66,6 +66,23 @@ Note that `node_modules` is per-project: having Node installed, or having run
 `npm install` in some other folder, does not cover this one. The `npm install`
 below creates this project's own, and you only run it once.
 
+First move somewhere you can write. A terminal opened as Administrator on
+Windows starts in `C:\WINDOWS\system32`, which is write-protected — clone
+there and every command fails with `Permission denied` or `EPERM`. Use a normal
+(non-Administrator) terminal and start from your home folder:
+
+```powershell
+cd $HOME            # Windows PowerShell
+mkdir projects -Force
+cd projects
+```
+
+```bash
+cd ~ && mkdir -p projects && cd projects   # macOS and Linux
+```
+
+Then, the same on every platform:
+
 ```bash
 git clone https://github.com/Nina932/Who.git
 cd Who
@@ -75,6 +92,9 @@ git checkout claude/facebook-page-product-analysis-3wuj0g
 
 npm install
 ```
+
+Your prompt should now end in `\Who` (or `/Who`). If it does not, the `cd` did
+not take and nothing after this will work.
 
 Once the pull request is merged, `main` will have everything and the
 `git checkout` line is no longer needed.
