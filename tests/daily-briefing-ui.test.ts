@@ -22,4 +22,14 @@ describe("daily briefing cockpit surface", () => {
     assert.match(header, /onNews\?\.\(data\.headlines\)/);
     assert.match(page, /onNews=\{setNews\}/);
   });
+
+  it("keeps internal briefing actions inside the live Next session", async () => {
+    const source = await readFile(
+      new URL("../components/HudHeader.tsx", import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /line\.href && line\.external/);
+    assert.match(source, /<Link[\s\S]*?href=\{line\.href\}/);
+    assert.match(source, /target="_blank"/);
+  });
 });

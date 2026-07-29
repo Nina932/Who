@@ -361,16 +361,24 @@ export default function HudHeader({
                 </>
               );
 
-              return line.href ? (
+              return line.href && line.external ? (
                 <a
                   key={line.id}
                   href={line.href}
-                  target={line.external ? "_blank" : undefined}
-                  rel={line.external ? "noreferrer noopener" : undefined}
+                  target="_blank"
+                  rel="noreferrer noopener"
                   className="daily-briefing-line flex gap-3 py-2.5"
                 >
                   {content}
                 </a>
+              ) : line.href ? (
+                <Link
+                  key={line.id}
+                  href={line.href}
+                  className="daily-briefing-line flex gap-3 py-2.5"
+                >
+                  {content}
+                </Link>
               ) : (
                 <div key={line.id} className="flex gap-3 py-2.5">
                   {content}
