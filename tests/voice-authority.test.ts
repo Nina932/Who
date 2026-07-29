@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CAPABILITIES, CAPABILITY_BY_ID, DEFAULT_POLICY } from "../lib/authority";
+import { scopeSatisfied } from "../lib/connectors";
+import {
+  SESSION_COOKIE,
+  expectedResponse,
+  issueChallenge,
+  issueSession,
+  resetSessions,
+  sessionFor,
+  tokenFromRequest,
+  verifyStepUp,
+} from "../lib/session";
+import { TOOLS } from "../lib/tools";
 import { createBroker } from "../lib/broker";
 import {
   amend,
@@ -437,5 +449,178 @@ describe("expiry is derived, never a background job", () => {
     const action = await pending();
     assert.equal(statusOf(action, NOW), "awaiting-approval");
     assert.equal(statusOf(action, action.expiresAt + 1), "expired");
+  });
+});
+
+// ── Sessions and step-up ─────────────────────────────────────────────────
+
+describe("sessions are proven, not supplied", () => {
+  it("issues a token the caller could not have guessed", () => {
+    resetSessions();
+    const a = issueSession("test");
+    const b = issueSession("test");
+    assert.notEqual(a.token, b.token);
+    assert.ok(a.token.length >= 40);
+  });
+
+  it("never stores the token — only a digest of it", () => {
+    resetSessions();
+    const { token, session } = issueSession("test");
+    // A stolen session record must not be a stolen session.
+    assert.notEqual(session.id, token);
+    assert.ok(!JSON.stringify(session).includes(token));
+  });
+
+  it("resolves a real token and refuses an invented one", () => {
+    resetSessions();
+    const { token, session } = issueSession("test");
+    assert.equal(sessionFor(token)?.id, session.id);
+    assert.equal(sessionFor("made-up-token"), null);
+    assert.equal(sessionFor(undefined), null);
+  });
+
+  it("expires", () => {
+    resetSessions();
+    const { token, session } = issueSession("test", NOW);
+    assert.ok(sessionFor(token, NOW + 1000));
+    assert.equal(sessionFor(token, session.expiresAt + 1), null);
+  });
+
+  it("reads the cookie without a parser", () => {
+    const request = {
+      headers: { get: (n: string) => (n === "cookie" ? `other=1; ${SESSION_COOKIE}=abc123; x=2` : null) },
+    };
+    assert.equal(tokenFromRequest(request), "abc123");
+  });
+});
+
+describe("step-up is a challenge, not a boolean", () => {
+  const withSecret = (secret: string | undefined, fn: () => void) => {
+    const saved = process.env.MORPHEUS_STEPUP_SECRET;
+    if (secret === undefined) delete process.env.MORPHEUS_STEPUP_SECRET;
+    else process.env.MORPHEUS_STEPUP_SECRET = secret;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env.MORPHEUS_STEPUP_SECRET;
+      else process.env.MORPHEUS_STEPUP_SECRET = saved;
+    }
+  };
+
+  it("blocks rather than waves through when no secret is configured", () => {
+    // An unconfigured second factor must stop the actions requiring one.
+    withSecret(undefined, () => {
+      resetSessions();
+      const challenge = issueChallenge("pa-1", "s1");
+      const result = verifyStepUp(challenge.id, "anything", {
+        pendingActionId: "pa-1",
+        sessionId: "s1",
+      });
+      assert.ok(!result.ok);
+      assert.equal(result.refusal, "not-configured");
+    });
+  });
+
+  it("accepts only a response proving possession of the secret", () => {
+    withSecret("shhh", () => {
+      resetSessions();
+      const challenge = issueChallenge("pa-1", "s1");
+      const good = expectedResponse(challenge.nonce, "shhh");
+      assert.ok(verifyStepUp(challenge.id, good, { pendingActionId: "pa-1", sessionId: "s1" }).ok);
+    });
+  });
+
+  it("burns the challenge on a wrong answer, so it is not an oracle", () => {
+    withSecret("shhh", () => {
+      resetSessions();
+      const challenge = issueChallenge("pa-1", "s1");
+      const first = verifyStepUp(challenge.id, "wrong", { pendingActionId: "pa-1", sessionId: "s1" });
+      assert.ok(!first.ok);
+      const retry = verifyStepUp(challenge.id, expectedResponse(challenge.nonce, "shhh"), {
+        pendingActionId: "pa-1",
+        sessionId: "s1",
+      });
+      assert.ok(!retry.ok);
+      assert.equal(retry.refusal, "already-used");
+    });
+  });
+
+  it("is bound to one action and one session", () => {
+    withSecret("shhh", () => {
+      resetSessions();
+      const challenge = issueChallenge("pa-1", "s1");
+      const good = expectedResponse(challenge.nonce, "shhh");
+      const wrongAction = verifyStepUp(challenge.id, good, {
+        pendingActionId: "pa-2",
+        sessionId: "s1",
+      });
+      assert.ok(!wrongAction.ok);
+      assert.equal(wrongAction.refusal, "wrong-action");
+
+      const another = issueChallenge("pa-1", "s1");
+      const wrongSession = verifyStepUp(another.id, expectedResponse(another.nonce, "shhh"), {
+        pendingActionId: "pa-1",
+        sessionId: "attacker",
+      });
+      assert.ok(!wrongSession.ok);
+      assert.equal(wrongSession.refusal, "wrong-session");
+    });
+  });
+
+  it("expires", () => {
+    withSecret("shhh", () => {
+      resetSessions();
+      const challenge = issueChallenge("pa-1", "s1", NOW);
+      const result = verifyStepUp(
+        challenge.id,
+        expectedResponse(challenge.nonce, "shhh"),
+        { pendingActionId: "pa-1", sessionId: "s1" },
+        challenge.expiresAt + 1,
+      );
+      assert.ok(!result.ok);
+      assert.equal(result.refusal, "expired");
+    });
+  });
+});
+
+// ── Scope enforcement ────────────────────────────────────────────────────
+
+describe("a grant's scopes gate the call", () => {
+  it("refuses an operation the grant did not authorise", () => {
+    const result = scopeSatisfied(["gmail.compose"], "gmail.send");
+    assert.ok(!result.ok);
+    assert.match(result.error, /did not include "gmail.send"/);
+  });
+
+  it("accepts the fully-qualified form providers actually return", () => {
+    assert.ok(scopeSatisfied(["https://www.googleapis.com/auth/gmail.compose"], "gmail.compose").ok);
+  });
+
+  it("distinguishes 'outside the authority layer' from 'granted nothing'", () => {
+    // undefined is a status probe or the OAuth dance itself; [] is a grant
+    // that authorised nothing and must refuse everything.
+    assert.ok(scopeSatisfied(undefined, "gmail.compose").ok);
+    assert.ok(!scopeSatisfied([], "gmail.compose").ok);
+  });
+
+  it("every tool's capability carries the scope its connector demands", () => {
+    // The mismatch this catches: a capability declaring "cases:write" while
+    // the API call requires "spreadsheets", which would refuse every call.
+    const required: Record<string, string> = {
+      "calendar.schedule": "calendar.events",
+      "gmail.draft": "gmail.compose",
+      "sheets.log": "spreadsheets",
+      "slides.deck": "presentations",
+    };
+    for (const [toolName, scope] of Object.entries(required)) {
+      const tool = TOOLS[toolName];
+      assert.ok(tool, `${toolName} missing`);
+      const capability = CAPABILITY_BY_ID[tool.capabilityId];
+      assert.ok(capability, `${tool.capabilityId} not registered`);
+      assert.ok(
+        capability.scopes.includes(scope),
+        `${toolName} needs "${scope}" but ${capability.id} grants ${capability.scopes.join(", ")}`,
+      );
+    }
   });
 });

@@ -86,14 +86,14 @@ describe("the workflow", () => {
     }
   });
 
-  it("never grants execute aumorpheusity to anything irreversible with money", () => {
+  it("never grants execute authority to anything irreversible with money", () => {
     // Drafting an invoice is preparation. Sending one is a commercial act.
     for (const stage of LEAD_TO_CASH.stages) {
       for (const spec of [stage.action, stage.waiting?.escalation]) {
         if (!spec) continue;
         if (stage.loop !== "cash") continue;
         assert.notEqual(
-          spec.aumorpheusity,
+          spec.authority,
           "execute",
           `${stage.id} would act on money unattended`,
         );

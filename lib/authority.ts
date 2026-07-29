@@ -384,6 +384,28 @@ export const CAPABILITIES: Capability[] = [
     consequence: "A charge on a real card, and possibly a recurring one.",
   },
 
+  {
+    id: "doc.append",
+    label: "Append to a spreadsheet",
+    domain: "business",
+    level: 3,
+    reversible: true,
+    // The OAuth scopes the call actually presents. These are matched against
+    // the redeemed grant at the connector, so a wrong name here is a refused
+    // call rather than a silently over-broad one.
+    scopes: ["spreadsheets", "drive.file"],
+    consequence: "A row is added to a sheet Morpheus created. Deleting it is a keystroke.",
+  },
+  {
+    id: "doc.create",
+    label: "Create a document or deck",
+    domain: "business",
+    level: 3,
+    reversible: true,
+    scopes: ["presentations", "drive.file"],
+    consequence: "A new file in your Drive, created by Morpheus and owned by you.",
+  },
+
   // ── Research ───────────────────────────────────────────────────────
   {
     id: "web.search",

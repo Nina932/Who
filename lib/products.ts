@@ -322,7 +322,7 @@ export function exampleProducts(now: number): Product[] {
       ],
       blockers: [
         { id: "finai-pg", name: "Live PostgreSQL deployment proof", openedAt: ago(38), release: true },
-        { id: "finai-auth", name: "Systemic aumorpheusity resolution", openedAt: ago(30) },
+        { id: "finai-auth", name: "Systemic authority resolution", openedAt: ago(30) },
         { id: "finai-demo", name: "Commercial demo definition", openedAt: ago(26), release: true },
       ],
       milestone: {

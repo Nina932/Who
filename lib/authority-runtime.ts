@@ -281,3 +281,60 @@ export async function grantFor(
 
   return { ok: true, grantId: result.grant.id };
 }
+
+
+// ── Execution ────────────────────────────────────────────────────────────
+
+/**
+ * Run an approved action.
+ *
+ * The missing link: a grant that nothing redeemed was a grant nothing could
+ * use. This takes the approved pending action, finds the tool that declared
+ * its capability, and runs it against the **frozen** arguments — not against
+ * anything supplied now. The binding is presented at redemption, so if the
+ * action was amended since approval the hash no longer matches and the call
+ * is refused rather than quietly running the new version.
+ */
+export async function executeApproved(
+  actionId: string,
+  sessionId: string,
+): Promise<{ ok: boolean; summary: string; action: PendingAction | null }> {
+  const action = (await allPending()).find((a) => a.id === actionId);
+  if (!action) return { ok: false, summary: "No such action.", action: null };
+
+  if (action.status !== "approved" || !action.grantId) {
+    return {
+      ok: false,
+      summary: `${action.reference} is ${statusOf(action, Date.now())}, not approved.`,
+      action,
+    };
+  }
+
+  const { TOOLS, runTool } = await import("./tools");
+  const tool = Object.values(TOOLS).find((t) => t.capabilityId === action.capabilityId);
+  if (!tool) {
+    return {
+      ok: false,
+      summary: `Nothing is wired to perform ${action.capabilityId}. The approval stands unused.`,
+      action,
+    };
+  }
+
+  await patchPending(actionId, { status: "executing" });
+
+  const result = await runTool(tool, action.immutableArguments, {
+    grantId: action.grantId,
+    pendingActionId: action.id,
+    operatorSessionId: sessionId,
+    proposeOnRefusal: false,
+  });
+
+  const updated = await patchPending(actionId, {
+    status: result.ok ? "completed" : "failed",
+    // The receipt: what happened, with evidence. Never "Done."
+    executionEvidence: result.ok ? result.summary : undefined,
+    failure: result.ok ? undefined : result.summary,
+  });
+
+  return { ok: result.ok, summary: result.summary, action: updated };
+}

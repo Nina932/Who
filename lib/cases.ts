@@ -19,11 +19,11 @@
  *      me. That single rule is the difference between a system that tracks
  *      work and one that maintains continuity.
  *
- *   3. **The next action is derived, never aumorpheused.** Layer one is the
+ *   3. **The next action is derived, never authored.** Layer one is the
  *      workflow: a stage knows what it needs. Layer two is policy: silence
  *      past a patience threshold flips the turn. Layer three is
  *      interpretation, which only ever *proposes* (see `proposeEvent`). Layer
- *      four is you, through the aumorpheusity model.
+ *      four is you, through the authority model.
  *
  * `/week` sits downstream of all of this. It allocates hours across actions
  * that were derived here; it does not invent them.
@@ -68,7 +68,7 @@ export const TURN_LABEL: Record<Turn, string> = {
  * Escalating is a decision you make once per action type, not a global switch,
  * because "draft the invoice" and "send the invoice" are not the same risk.
  */
-export type Aumorpheusity =
+export type Authority =
   /** Say what should happen. Nothing is produced. */
   | "recommend"
   /** Produce the artefact — draft, document, event — and stop. */
@@ -76,7 +76,7 @@ export type Aumorpheusity =
   /** Do it, and tell you afterwards. */
   | "execute";
 
-export const AUMORPHEUSITY_LABEL: Record<Aumorpheusity, string> = {
+export const AUTHORITY_LABEL: Record<Authority, string> = {
   recommend: "Recommends",
   prepare: "Prepares, you send",
   execute: "Acts, then tells you",
@@ -115,8 +115,8 @@ export interface StageAction {
   title: string;
   /** Honest hours. This is what `/week` spends its budget in. */
   hours: number;
-  aumorpheusity: Aumorpheusity;
-  /** What Morpheus produces before handing it back, when aumorpheusity allows. */
+  authority: Authority;
+  /** What Morpheus produces before handing it back, when authority allows. */
   prepares?: string;
   /** Base factor scores for `/week`. Risk and value adjust them upward. */
   factors: Partial<Record<FactorKey, number>>;
@@ -201,7 +201,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Qualify {counterparty} yourself — Morpheus did not",
           hours: 0.25,
-          aumorpheusity: "recommend",
+          authority: "recommend",
           factors: { revenue: 0.5, decay: 0.8, unblocks: 0.9, effort: 0.1 },
         },
       },
@@ -219,7 +219,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Decide whether {counterparty} is real work",
         hours: 0.25,
-        aumorpheusity: "recommend",
+        authority: "recommend",
         prepares: "The signals for and against, already gathered",
         factors: { revenue: 0.5, decay: 0.8, unblocks: 0.9, effort: 0.1 },
       },
@@ -233,7 +233,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Send {counterparty} the proposal",
         hours: 2,
-        aumorpheusity: "prepare",
+        authority: "prepare",
         prepares: "A drafted proposal in your voice, ready to read and send",
         factors: {
           revenue: 0.85,
@@ -257,7 +257,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Follow up — {counterparty} has had the proposal {days} days",
           hours: 0.25,
-          aumorpheusity: "prepare",
+          authority: "prepare",
           prepares: "A follow-up that does not read as a nag",
           factors: { revenue: 0.7, decay: 0.85, obligation: 0.2, effort: 0.05 },
         },
@@ -272,7 +272,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Start the work for {counterparty}",
         hours: 2,
-        aumorpheusity: "recommend",
+        authority: "recommend",
         factors: { obligation: 0.8, decay: 0.4, unblocks: 0.8, revenue: 0.4, effort: 0.2 },
       },
       on: { scheduled: "delivery-scheduled", started: "delivery-active" },
@@ -291,7 +291,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Deliver for {counterparty} — the booked date is here",
           hours: 8,
-          aumorpheusity: "recommend",
+          authority: "recommend",
           factors: { obligation: 0.95, decay: 0.9, revenue: 0.6, effort: 0.9 },
         },
       },
@@ -305,7 +305,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Finish the work for {counterparty}",
         hours: 8,
-        aumorpheusity: "recommend",
+        authority: "recommend",
         factors: {
           obligation: 0.95,
           revenue: 0.6,
@@ -328,7 +328,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Ask {counterparty} to sign off — delivered {days} days ago",
           hours: 0.25,
-          aumorpheusity: "prepare",
+          authority: "prepare",
           prepares: "The sign-off request, with what was delivered attached",
           // Unacceptance is the quietest way an invoice never gets sent.
           factors: { revenue: 0.8, obligation: 0.4, decay: 0.9, unblocks: 0.95, effort: 0.05 },
@@ -344,7 +344,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Invoice {counterparty} for {value}",
         hours: 0.25,
-        aumorpheusity: "prepare",
+        authority: "prepare",
         prepares: "The invoice, filled in from the case — you press send",
         factors: { revenue: 0.95, decay: 0.7, unblocks: 0.6, effort: 0.05, irreversible: 0.1 },
       },
@@ -361,7 +361,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Chase {value} from {counterparty} — {days} days out",
           hours: 0.5,
-          aumorpheusity: "prepare",
+          authority: "prepare",
           prepares: "The chase, escalating in tone with each one sent",
           factors: { revenue: 0.95, decay: 0.75, obligation: 0.3, effort: 0.1 },
         },
@@ -429,7 +429,7 @@ export interface NextAction {
   loop: LoopDomain;
   title: string;
   hours: number;
-  aumorpheusity: Aumorpheusity;
+  authority: Authority;
   prepares?: string;
   factors: Record<string, number>;
   /** Why this is the next action — shown so no action is ever anonymous. */
@@ -577,7 +577,7 @@ export function project(record: StoredCase, now: number): CaseView {
     loop: stage.loop,
     title: fill(spec.title, withValue, currency, days),
     hours: spec.hours,
-    aumorpheusity: spec.aumorpheusity,
+    authority: spec.authority,
     prepares: spec.prepares,
     factors: { ...spec.factors } as Record<string, number>,
     why,

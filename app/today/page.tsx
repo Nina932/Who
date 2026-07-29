@@ -13,7 +13,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { SurfaceHeader, EmptyLedger, RiskDot, ago, money, AumorpheusityChip } from "@/components/cases/parts";
+import { SurfaceHeader, EmptyLedger, RiskDot, ago, money, AuthorityChip } from "@/components/cases/parts";
 import { useCases } from "@/components/cases/useCases";
 import { candidatesFromCases, type CaseView } from "@/lib/cases";
 import { DEFAULT_CONTEXT, DEFAULT_WEIGHTS, scoreCandidate } from "@/lib/priority";
@@ -178,7 +178,7 @@ export default function TodayPage() {
                       style={{ background: "rgba(62,194,255,0.06)" }}
                     >
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                        <AumorpheusityChip aumorpheusity={view.action.aumorpheusity} />
+                        <AuthorityChip authority={view.action.authority} />
                         <span className="text-[12px]" style={{ color: "var(--color-ink-soft)" }}>
                           {view.action.prepares}
                         </span>

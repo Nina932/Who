@@ -69,7 +69,7 @@ other cell is dark, and that darkness is the guarantee.
 
 Published config for the released "mini" checkpoint: embedding dim **128**,
 **4** layers, **4** heads, history length **127**, candidate length **64**,
-vocab **1M** each for user/item/aumorpheus.
+vocab **1M** each for user/item/author.
 
 ### Scoring — 19 heads, one weighted sum
 
@@ -82,9 +82,9 @@ QUOTE_WEIGHT         SHARE_WEIGHT         SHARE_VIA_DM_WEIGHT
 SHARE_VIA_COPY_LINK_WEIGHT                CLICK_WEIGHT
 PROFILE_CLICK_WEIGHT QUOTED_CLICK_WEIGHT  PHOTO_EXPAND_WEIGHT
 VQV_WEIGHT           DWELL_WEIGHT         CONT_DWELL_TIME_WEIGHT
-FOLLOW_AUMORPHEUS_WEIGHT
-NOT_INTERESTED_WEIGHT  MUTE_AUMORPHEUS_WEIGHT
-BLOCK_AUMORPHEUS_WEIGHT    REPORT_WEIGHT
+FOLLOW_AUTHOR_WEIGHT
+NOT_INTERESTED_WEIGHT  MUTE_AUTHOR_WEIGHT
+BLOCK_AUTHOR_WEIGHT    REPORT_WEIGHT
 ```
 
 Fifteen positive, four negative. And the combine step:
@@ -105,7 +105,7 @@ doesn't earn it.
 
 ### Selection
 
-Sort by score, apply an aumorpheus-diversity adjustment so one account cannot
+Sort by score, apply an author-diversity adjustment so one account cannot
 stack the feed, take top K, run final visibility and dedup checks, respond.
 
 ## 3. The thing the infographic is really about
@@ -160,7 +160,7 @@ nothing — exactly as in the real system.
 | Candidate isolation masking | **Real** |
 | The 19 action names | **Real** — the constants from `weighted_scorer.rs` |
 | The combine formula and its negative branch | **Real** |
-| Aumorpheus-diversity decay in selection | **Real** |
+| Author-diversity decay in selection | **Real** |
 | Every weight **value** | **Ours.** xAI published architecture and a mini checkpoint, not production weights. |
 | The prediction function | **Ours.** A transparent feature function, because a black box teaches nothing. |
 | The corpus | **Ours.** Twelve posts, half echoing the bait in the source image, half substantive. |

@@ -263,6 +263,7 @@ lib/
   broker.ts             Grants bound to one action: id, argument hash, session
   pending.ts            Frozen arguments, the challenge phrase, amendment
   voice-authority.ts    The floor model, audio provenance, step-up rules
+  session.ts            Proven sessions; step-up as a bound, single-use nonce
   authority-runtime.ts  The live broker and withAuthority — the only path out
   intent.ts             Answer modes: direct / business / code / action
   voice.ts              The Morpheus register, and delivery under risk
@@ -306,7 +307,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 384 tests + build, no API keys needed
+npm run verify        # typecheck + 401 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```

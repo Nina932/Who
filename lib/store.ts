@@ -109,7 +109,7 @@ function createRedisDriver(url: string, token: string): StoreDriver {
   const command = async (parts: string[]): Promise<unknown> => {
     const response = await fetch(url, {
       method: "POST",
-      headers: { aumorpheusization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(parts),
       cache: "no-store",
     });

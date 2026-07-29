@@ -283,21 +283,101 @@ Canonical serialisation sorts keys and drops `undefined`, so a JSON round-trip
 cannot invalidate an approval. That matters: spurious invalidation trains
 people to re-approve reflexively, which is worse than not asking.
 
-## 11. Not built
+## 11. Sessions, step-up, and the executed action
 
-- **No tool consumes a pending action's grant yet.** The lifecycle is complete
-  — propose, read back, approve, bind, redeem — and `withAuthority` accepts the
-  `grantId`, but no tool call currently waits on one. The Loops Engine uses the
-  request-and-redeem path, which is the unattended case.
-- **Scopes are names, not enforcement.** A redeemed grant hands its scope list
-  to the action; the connectors do not yet verify that the redeemed grant
-  authorises the exact operation they are about to perform.
-- **Step-up is a boolean.** `steppedUp` is trusted from the caller. WebAuthn is
-  the seam it is shaped for; nothing implements it.
-- **`operatorSessionId` is supplied, not proven.** There is no session
-  authority issuing or validating it.
-- **No wake-word or push-to-talk gate.** The floor model exists in
-  `lib/voice-authority.ts`; the microphone path does not yet drive it.
+Three things were shapes rather than mechanisms. All three are now real.
+
+### The session is proven, not supplied
+
+`operatorSessionId` was a string the caller chose — and anything that can
+choose its own session id can forge one, which made "an approval is not
+transferable between sessions" decorative.
+
+A session is now issued server-side against a random token delivered in an
+httpOnly cookie. The **id is `sha256(token)`**, so the record never contains
+the token: a stolen session record is not a stolen session, for the same
+reason password hashes exist. The id can therefore appear in the audit log
+without the log becoming a key store.
+
+### Step-up is a challenge, not a boolean
+
+`steppedUp: true` was a field the caller set. It is now a nonce issued
+server-side, bound to one pending action and one session, single-use, expiring
+in two minutes. The response must prove possession of `MORPHEUS_STEPUP_SECRET`
+— something the model has never seen and cannot produce from the transcript.
+
+Compared in constant time, and **burned on a wrong answer** so a challenge is
+not an oracle to guess against. With no secret configured, step-up *fails* —
+an unconfigured second factor blocks the actions requiring one rather than
+waving them through.
+
+WebAuthn is the shape this is built for: the secret becomes a hardware key and
+`verifyStepUp` becomes an assertion check. Nothing else moves.
+
+### Scopes gate the call
+
+A redeemed grant handed back a scope list that nothing checked — the connector
+used whatever the stored OAuth token allowed, which is broader. The grant was a
+promise, not a constraint.
+
+Now every connector call names the scope it needs, checked **before the token
+is fetched**, so a call the grant does not authorise never gets as far as
+holding a credential. `undefined` means "outside the authority layer" — a
+status probe, the OAuth dance — and is deliberately distinct from `[]`, which
+means "granted nothing" and refuses everything.
+
+This surfaced a real mismatch: `sheets.log` declared `cases:write` while the
+Sheets API needs `spreadsheets`, so every call would have been refused. Two
+accurate capabilities replaced the borrowed ones, and a test now asserts that
+each tool's capability carries the scope its connector demands.
+
+### A refusal starts the approval flow
+
+`runTool` no longer dead-ends on `needs-approval`. It freezes the arguments,
+creates a pending action, and returns the read-back — so the operator hears
+exactly what will run. `executeApproved` then runs the tool against the
+**frozen** arguments, presenting the binding at redemption.
+
+Verified end to end against a running server:
+
+```
+approve without a session   → "No session."
+sign in                     → session issued
+propose calendar.propose    → "…Deleting it costs a click. Say: approve propose 1001."
+approve by voice            → true
+execute                     → "Nothing was placed on the calendar.
+                               Skipped: … google OAuth is not configured."
+```
+
+That last line is the receipt working: it reports what actually happened rather
+than "Done".
+
+And the one that matters most:
+
+```
+approve 1003                → true
+amend 1003                  → "The previous approval no longer applies." (new ref 1005)
+execute 1003                → "1003 is cancelled, not approved."
+```
+
+## 12. Not built
+
+- **No wake-word or push-to-talk gate.** The floor model exists and the API
+  honours it, but the browser microphone path does not yet drive it — the
+  client sends `floor` rather than the recogniser owning it.
+- **`self-playback` is a flag, not detection.** The caller says whether audio
+  came from the speaker. Acoustic echo cancellation would decide it properly.
+- **Step-up is a shared secret, not a hardware key.** Real, and the right
+  shape, but a secret in an environment variable is not a possession factor in
+  the way a security key is.
+- **Sessions are per-process.** A restart signs you out. Correct for a local
+  single-operator tool, wrong for anything multi-device.
+- **Only Google connectors enforce scope.** Slack and LinkedIn calls do not yet
+  take a granted set.
+- **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
+  capabilities with no sandbox behind them.
+- **No spend metering.** The limit is per action; nothing tracks cumulative
+  spend across a day.
 - **No sandbox.** `sandbox:exec` and `sandbox:write` are registered
   capabilities with no sandbox behind them.
 - **No spend metering.** The limit is checked per action; nothing tracks

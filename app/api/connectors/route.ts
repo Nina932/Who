@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { guardMutation } from "@/lib/guard";
 import {
   CONNECTORS_BY_ID,
-  aumorpheusizeUrl,
+  authorizeUrl,
   disconnect,
   listCalendarEvents,
   listDriveFiles,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/connectors";
 
 /**
- * Connector status, aumorpheusisation kick-off, disconnect, and a live probe.
+ * Connector status, authorisation kick-off, disconnect, and a live probe.
  *
  * The probe matters: a connector that claims "connected" without ever having
  * made a call is the same kind of theatre this build has been removing.
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
   switch (body.action) {
     case "connect": {
-      const url = aumorpheusizeUrl(connectorId, makeState(connectorId));
+      const url = authorizeUrl(connectorId, makeState(connectorId));
       if (!url) {
         return NextResponse.json(
           {

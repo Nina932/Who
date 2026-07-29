@@ -18,7 +18,8 @@
  * side effect can only happen after a human said GO.
  */
 
-import { withAuthority } from "./authority-runtime";
+import { propose, withAuthority } from "./authority-runtime";
+import { readBack, type Origin } from "./pending";
 import {
   CONNECTORS_BY_ID,
   appendToLog,
@@ -32,6 +33,11 @@ export interface ToolResult {
   ok: boolean;
   /** Written into the run's artefacts, so the record shows what really happened. */
   summary: string;
+  /**
+   * Set when the call was refused for want of approval and a pending action
+   * was created. The caller shows the read-back and waits; it is not a failure.
+   */
+  awaitingApproval?: string;
 }
 
 export interface ToolSpec {
@@ -49,7 +55,12 @@ export interface ToolSpec {
   purpose: string;
   /** The exact JSON shape the model must return. */
   schemaHint: string;
-  run: (input: unknown) => Promise<ToolResult>;
+  /**
+   * `granted` is the scope list from the redeemed grant, threaded into the
+   * connector call. Passing it is what turns the grant from a promise into a
+   * constraint — the connector refuses anything the grant did not authorise.
+   */
+  run: (input: unknown, granted?: string[]) => Promise<ToolResult>;
 }
 
 /**
@@ -59,19 +70,73 @@ export interface ToolSpec {
  * not an exception — the loop records what was refused and why, which is the
  * artefact worth having when somebody asks later why nothing was sent.
  */
-export async function runTool(tool: ToolSpec, input: unknown, grantId?: string): Promise<ToolResult> {
-  const outcome = await withAuthority(tool.capabilityId, async () => tool.run(input), { grantId });
+export async function runTool(
+  tool: ToolSpec,
+  input: unknown,
+  binding: {
+    grantId?: string;
+    pendingActionId?: string;
+    operatorSessionId?: string;
+    /** Who asked. A voice request that needs approval becomes a pending one. */
+    requestedBy?: Origin;
+    /** Set false to refuse rather than propose. Loops do not want a prompt. */
+    proposeOnRefusal?: boolean;
+  } = {},
+): Promise<ToolResult> {
+  const outcome = await withAuthority(
+    tool.capabilityId,
+    async (granted) => tool.run(input, granted),
+    {
+      grantId: binding.grantId,
+      pendingActionId: binding.pendingActionId,
+      operatorSessionId: binding.operatorSessionId,
+      args: input,
+    },
+  );
 
-  if (!outcome.ok) {
-    return {
-      ok: false,
-      summary: `Not run. ${outcome.reason}${
-        outcome.refusal === "needs-approval" ? " Approve it on the Authority screen and it will run." : ""
-      }`,
-    };
+  if (outcome.ok) return outcome.value;
+
+  // A refusal for want of approval is not a dead end — it is the start of the
+  // approval flow. The arguments are frozen here, so what the operator is
+  // about to be read is exactly what will run.
+  if (outcome.refusal === "needs-approval" && binding.proposeOnRefusal !== false) {
+    const proposed = await propose({
+      capabilityId: tool.capabilityId,
+      requestedBy: binding.requestedBy ?? "text",
+      actionSummary: describeCall(tool, input),
+      args: input,
+    });
+
+    if (proposed.ok) {
+      return {
+        ok: false,
+        awaitingApproval: proposed.action.id,
+        summary: readBack(proposed.action, "voice"),
+      };
+    }
   }
 
-  return outcome.value;
+  return {
+    ok: false,
+    summary: `Not run. ${outcome.reason}`,
+  };
+}
+
+/**
+ * One sentence naming what will happen, built from the actual arguments.
+ *
+ * Read aloud before approval, so it has to contain the details that matter —
+ * the recipient, the title, the amount. "Send an email" is not something a
+ * person can meaningfully approve.
+ */
+export function describeCall(tool: ToolSpec, input: unknown): string {
+  const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const detail = ["to", "title", "summary", "subject", "channel", "amount"]
+    .filter((key) => typeof record[key] === "string" || typeof record[key] === "number")
+    .map((key) => `${key}: ${String(record[key]).slice(0, 80)}`)
+    .join(", ");
+
+  return detail ? `${tool.purpose.split(".")[0]}. ${detail}.` : tool.purpose;
 }
 
 // ── Validation helpers ───────────────────────────────────────────────────
@@ -111,7 +176,7 @@ export const TOOLS: Record<string, ToolSpec> = {
     purpose:
       "Place each approved post on the operator's calendar at its publish time, so the week is visible rather than living in a document.",
     schemaHint: `{"events":[{"summary":string,"description":string,"startsAt":"ISO 8601 datetime in the future","minutes":number}]}`,
-    async run(input) {
+    async run(input, granted) {
       const root = asRecord(input);
       const events = Array.isArray(root?.events) ? root.events : null;
       if (!events || events.length === 0) {
@@ -134,6 +199,7 @@ export const TOOLS: Record<string, ToolSpec> = {
         }
 
         const result = await createCalendarEvent({
+          granted,
           summary,
           description: asString(event?.description) ?? undefined,
           startsAt,
@@ -169,7 +235,7 @@ export const TOOLS: Record<string, ToolSpec> = {
     purpose:
       "Save the approved reply as a Gmail draft. It is never sent — the operator presses send.",
     schemaHint: `{"to":string,"subject":string,"body":string}`,
-    async run(input) {
+    async run(input, granted) {
       const root = asRecord(input);
       const to = asString(root?.to);
       const subject = asString(root?.subject);
@@ -182,7 +248,7 @@ export const TOOLS: Record<string, ToolSpec> = {
         return { ok: false, summary: `Draft not created — "${to}" is not a valid address.` };
       }
 
-      const result = await createMailDraft({ to, subject, body });
+      const result = await createMailDraft({ to, subject, body, granted });
       return result.ok
         ? { ok: true, summary: `Draft saved to Gmail for ${to} — "${subject}". Not sent.` }
         : { ok: false, summary: `Draft failed — ${result.error}` };
@@ -192,11 +258,11 @@ export const TOOLS: Record<string, ToolSpec> = {
   "sheets.log": {
     name: "sheets.log",
     connectorId: "google-sheets",
-    capabilityId: "case.update",
+    capabilityId: "doc.append",
     purpose:
       "Append one row to a running log spreadsheet, so results can be compared across weeks instead of living in prose.",
     schemaHint: `{"log":string,"row":[string]}`,
-    async run(input) {
+    async run(input, granted) {
       const root = asRecord(input);
       const log = asString(root?.log) ?? "Morpheus — run log";
       const row = Array.isArray(root?.row)
@@ -209,7 +275,7 @@ export const TOOLS: Record<string, ToolSpec> = {
 
       // Stamped here rather than by the model: a model-invented timestamp in a
       // log is worse than none at all.
-      const result = await appendToLog(log, [new Date().toISOString(), ...row]);
+      const result = await appendToLog(log, [new Date().toISOString(), ...row], granted);
       return result.ok
         ? { ok: true, summary: `Logged to "${log}" — ${result.data.url}` }
         : { ok: false, summary: `Log failed — ${result.error}` };
@@ -219,10 +285,10 @@ export const TOOLS: Record<string, ToolSpec> = {
   "slides.deck": {
     name: "slides.deck",
     connectorId: "google-slides",
-    capabilityId: "note.write",
+    capabilityId: "doc.create",
     purpose: "Turn the approved outline into a Google Slides deck.",
     schemaHint: `{"title":string,"slides":[{"title":string,"body":string}]}`,
-    async run(input) {
+    async run(input, granted) {
       const root = asRecord(input);
       const title = asString(root?.title);
       const slides = Array.isArray(root?.slides) ? root.slides : [];
@@ -241,7 +307,7 @@ export const TOOLS: Record<string, ToolSpec> = {
         return { ok: false, summary: "Deck not created — no usable slides were proposed." };
       }
 
-      const result = await createSlideDeck({ title, slides: clean });
+      const result = await createSlideDeck({ title, slides: clean, granted });
       return result.ok
         ? {
             ok: true,

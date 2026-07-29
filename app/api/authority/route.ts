@@ -11,6 +11,7 @@ import {
 } from "@/lib/authority";
 import {
   allPending,
+  executeApproved,
   appendAudit,
   auditLog,
   currentPolicy,
@@ -23,6 +24,15 @@ import {
   savePolicy,
 } from "@/lib/authority-runtime";
 import { guardMutation } from "@/lib/guard";
+import {
+  SESSION_COOKIE,
+  isStepUpConfigured,
+  issueChallenge,
+  issueSession,
+  sessionFor,
+  tokenFromRequest,
+  verifyStepUp,
+} from "@/lib/session";
 import { amend, challengePhrase, readBack, statusOf } from "@/lib/pending";
 import { explain, judge, voiceApprovalFor, type VoiceContext } from "@/lib/voice-authority";
 
@@ -80,7 +90,8 @@ interface Body {
   actionSummary?: unknown;
   args?: unknown;
   transcript?: unknown;
-  sessionId?: unknown;
+  challengeId?: unknown;
+  response?: unknown;
   channel?: unknown;
   previewed?: unknown;
   steppedUp?: unknown;
@@ -111,10 +122,58 @@ export async function POST(request: Request) {
     return saved;
   };
 
+  // The session is proven, never supplied. A caller that could name its own
+  // session id could forge the binding that makes an approval untransferable.
+  const session = sessionFor(tokenFromRequest(request));
+
   try {
     const current = await currentPolicy();
 
     switch (str(body.action)) {
+      case "sign-in": {
+        // Same-origin and the optional secret are already checked by the
+        // guard; this turns that into a session the binding can reference.
+        const { token, session: issued } = issueSession("same-origin");
+        const response = NextResponse.json({ session: { id: issued.id, expiresAt: issued.expiresAt } });
+        response.cookies.set(SESSION_COOKIE, token, {
+          httpOnly: true,
+          sameSite: "strict",
+          path: "/",
+          maxAge: Math.floor((issued.expiresAt - Date.now()) / 1000),
+        });
+        return response;
+      }
+
+      case "step-up-challenge": {
+        const actionId = str(body.actionId);
+        if (!actionId) return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        if (!session) return NextResponse.json({ error: "No session." }, { status: 401 });
+        if (!isStepUpConfigured()) {
+          // Blocked, not waved through. An unconfigured second factor must
+          // stop the actions that need one.
+          return NextResponse.json(
+            {
+              error:
+                "No MORPHEUS_STEPUP_SECRET is set, so no second factor can be verified. Actions requiring step-up stay blocked.",
+            },
+            { status: 503 },
+          );
+        }
+        const challenge = issueChallenge(actionId, session.id);
+        return NextResponse.json({
+          challengeId: challenge.id,
+          nonce: challenge.nonce,
+          expiresAt: challenge.expiresAt,
+        });
+      }
+
+      case "execute-approved": {
+        const actionId = str(body.actionId);
+        if (!actionId) return NextResponse.json({ error: "actionId required." }, { status: 400 });
+        if (!session) return NextResponse.json({ error: "No session." }, { status: 401 });
+        const result = await executeApproved(actionId, session.id);
+        return NextResponse.json(result);
+      }
       case "set-ceiling": {
         const requested = num(body.ceiling);
         if (requested === undefined || requested < 1 || requested > 4) {
@@ -268,13 +327,38 @@ export async function POST(request: Request) {
           );
         }
 
+        // Step-up is a verified challenge response, not a boolean the caller
+        // sets. `steppedUp` is derived here or it is false.
+        let steppedUp = false;
+        const challengeId = str(body.challengeId);
+        const response = str(body.response);
+        if (challengeId && response && session) {
+          const verified = verifyStepUp(challengeId, response, {
+            pendingActionId: action.id,
+            sessionId: session.id,
+          });
+          if (!verified.ok) {
+            await appendAudit([
+              {
+                at: Date.now(),
+                capabilityId: action.capabilityId,
+                outcome: "refused",
+                refusal: "needs-approval",
+                detail: `Step-up failed (${verified.refusal}): ${verified.reason}`,
+              },
+            ]);
+            return NextResponse.json({ approved: false, code: verified.refusal, reason: verified.reason });
+          }
+          steppedUp = true;
+        }
+
         const context: VoiceContext = {
           floor: (str(body.floor) as VoiceContext["floor"]) ?? "awaiting-approval",
           source: (str(body.source) as VoiceContext["source"]) ?? "unknown",
           speaking: body.speaking === true,
-          sessionId: str(body.sessionId) ?? null,
+          sessionId: session?.id ?? null,
           previewed: body.previewed === true,
-          steppedUp: body.steppedUp === true,
+          steppedUp,
         };
 
         const verdict = judge(action, transcript, context, Date.now());
@@ -301,7 +385,8 @@ export async function POST(request: Request) {
       case "approve-action": {
         // The UI path. Same engine, same binding — a click is not a shortcut.
         const actionId = str(body.actionId);
-        const sessionId = str(body.sessionId) ?? "ui-session";
+        if (!session) return NextResponse.json({ error: "No session." }, { status: 401 });
+        const sessionId = session.id;
         if (!actionId) {
           return NextResponse.json({ error: "actionId required." }, { status: 400 });
         }

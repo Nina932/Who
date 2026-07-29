@@ -11,9 +11,9 @@
 import Link from "next/link";
 import NyxCoreMark from "@/components/brand/NyxCoreMark";
 import {
-  AUMORPHEUSITY_LABEL,
+  AUTHORITY_LABEL,
   TURN_LABEL,
-  type Aumorpheusity,
+  type Authority,
   type CaseView,
   type RiskLevel,
   type Turn,
@@ -64,10 +64,10 @@ export function RiskDot({ level, title }: { level: RiskLevel; title?: string }) 
   );
 }
 
-export function AumorpheusityChip({ aumorpheusity }: { aumorpheusity: Aumorpheusity }) {
+export function AuthorityChip({ authority }: { authority: Authority }) {
   return (
     <span className="label" style={{ color: "var(--color-ink-faint)" }}>
-      Morpheus {AUMORPHEUSITY_LABEL[aumorpheusity].toLowerCase()}
+      Morpheus {AUTHORITY_LABEL[authority].toLowerCase()}
     </span>
   );
 }

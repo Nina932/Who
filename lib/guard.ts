@@ -54,7 +54,7 @@ export function guardMutation(request: Request): GuardFailure | null {
 
   const presented =
     request.headers.get("x-morpheus-secret") ??
-    request.headers.get("aumorpheusization")?.replace(/^Bearer\s+/i, "");
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
   if (presented !== secret) {
     return {

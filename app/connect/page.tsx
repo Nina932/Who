@@ -66,7 +66,7 @@ function ConnectInner() {
 
         if (action === "connect") {
           if (data.url) window.location.href = data.url;
-          else setError(data.error ?? "Could not start aumorpheusisation.");
+          else setError(data.error ?? "Could not start authorisation.");
           return;
         }
         if (action === "probe") {
@@ -138,7 +138,7 @@ function ConnectInner() {
             >
               {callbackResult === "connected"
                 ? `Connected ${params.get("connector") ?? ""}. Probe it to confirm the token works.`
-                : `Aumorpheusisation failed — ${params.get("reason") ?? "unknown reason"}`}
+                : `Authorisation failed — ${params.get("reason") ?? "unknown reason"}`}
             </span>
           </div>
         ) : null}
@@ -154,7 +154,7 @@ function ConnectInner() {
               <code style={{ color: "var(--color-signal)" }}>
                 {"{origin}"}/api/connectors/callback
               </code>{" "}
-              as an aumorpheusised redirect URI, then set:
+              as an authorised redirect URI, then set:
             </p>
             <pre
               className="panel mt-3 overflow-x-auto rounded-lg p-3 text-[11px]"

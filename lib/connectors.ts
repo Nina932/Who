@@ -3,7 +3,7 @@
  *
  * The largest gap between this and the real Apex was that the integrations —
  * Drive, Calendar, Email — were drawn and inert. This is the actual wiring:
- * a real Google OAuth aumorpheusisation-code flow with refresh, tokens persisted
+ * a real Google OAuth authorisation-code flow with refresh, tokens persisted
  * through the same store as everything else, and real API calls on top.
  *
  * It needs credentials to do anything, and it says so rather than pretending.
@@ -161,14 +161,14 @@ function providerConfig(provider: OAuthProvider): ProviderConfig {
       }
     : provider === "linkedin"
       ? {
-          authUrl: "https://www.linkedin.com/oauth/v2/aumorpheusization",
+          authUrl: "https://www.linkedin.com/oauth/v2/authorization",
           tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
           clientId: process.env.LINKEDIN_CLIENT_ID,
           clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
           extraAuthParams: {},
         }
       : {
-          authUrl: "https://slack.com/oauth/v2/aumorpheusize",
+          authUrl: "https://slack.com/oauth/v2/authorize",
           tokenUrl: "https://slack.com/api/oauth.v2.access",
           clientId: process.env.SLACK_CLIENT_ID,
           clientSecret: process.env.SLACK_CLIENT_SECRET,
@@ -193,7 +193,7 @@ function redirectUri(): string {
   );
 }
 
-// ── Aumorpheusisation ────────────────────────────────────────────────────────
+// ── Authorisation ────────────────────────────────────────────────────────
 
 /**
  * Build the consent URL.
@@ -201,7 +201,7 @@ function redirectUri(): string {
  * `access_type=offline` + `prompt=consent` because without a refresh token the
  * connection silently dies in an hour, which is worse than not connecting.
  */
-export function aumorpheusizeUrl(connectorId: ConnectorId, state: string): string | null {
+export function authorizeUrl(connectorId: ConnectorId, state: string): string | null {
   const spec = CONNECTORS_BY_ID[connectorId];
   if (!spec || !providerConfigured(spec.provider)) return null;
 
@@ -248,7 +248,7 @@ export async function exchangeCode(
         client_id: config.clientId as string,
         client_secret: config.clientSecret as string,
         redirect_uri: redirectUri(),
-        grant_type: "aumorpheusization_code",
+        grant_type: "authorization_code",
       }),
     });
 
@@ -268,7 +268,7 @@ export async function exchangeCode(
     };
 
     if (spec.provider === "slack" && data.ok === false) {
-      return { ok: false, error: `slack: ${data.error ?? "aumorpheusisation refused"}` };
+      return { ok: false, error: `slack: ${data.error ?? "authorisation refused"}` };
     }
 
     const token = data.access_token ?? data.authed_user?.access_token;
@@ -390,12 +390,52 @@ export type CallOutcome<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; needsConnection?: boolean };
 
+/**
+ * Scope enforcement.
+ *
+ * A redeemed grant hands back a scope list. Until now that list was carried
+ * around and never checked — the connector used whatever the stored OAuth
+ * token happened to allow, which is usually broader than the grant. So the
+ * grant was a promise rather than a constraint.
+ *
+ * This is where it becomes a constraint: every call names the scope it needs,
+ * and if the caller supplies a granted set that does not contain it, the call
+ * does not happen. `undefined` means the caller is outside the authority layer
+ * — a status probe, the OAuth dance itself — and is deliberately distinct from
+ * an empty array, which means "granted nothing" and refuses everything.
+ */
+export function scopeSatisfied(
+  granted: string[] | undefined,
+  required: string,
+): { ok: true } | { ok: false; error: string } {
+  if (granted === undefined) return { ok: true };
+  // Google's scopes arrive fully qualified; the registry uses the short form.
+  const has = granted.some((scope) => scope === required || scope.endsWith(`/${required}`));
+  return has
+    ? { ok: true }
+    : {
+        ok: false,
+        error: `The approval did not include "${required}" — it granted ${
+          granted.length ? granted.join(", ") : "nothing"
+        }.`,
+      };
+}
+
 async function googleFetch<T>(
   connectorId: ConnectorId,
   url: string,
   init?: RequestInit,
+  scope?: { required: string; granted: string[] | undefined },
 ): Promise<CallOutcome<T>> {
   const spec = CONNECTORS_BY_ID[connectorId];
+
+  // Checked before the token is fetched. A call the grant does not authorise
+  // should never get as far as holding a credential.
+  if (scope) {
+    const allowed = scopeSatisfied(scope.granted, scope.required);
+    if (!allowed.ok) return { ok: false, error: allowed.error };
+  }
+
   const token = await accessToken(connectorId);
   if (!token) {
     return {
@@ -412,7 +452,7 @@ async function googleFetch<T>(
       ...init,
       headers: {
         ...(init?.headers ?? {}),
-        aumorpheusization: `Bearer ${token}`,
+        authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
     });
@@ -483,6 +523,8 @@ export async function createCalendarEvent(input: {
   description?: string;
   startsAt: Date;
   minutes?: number;
+  /** Scopes from the redeemed grant. Omit only outside the authority layer. */
+  granted?: string[];
 }): Promise<CallOutcome<CalendarEvent>> {
   const end = new Date(input.startsAt.getTime() + (input.minutes ?? 30) * 60_000);
 
@@ -498,6 +540,7 @@ export async function createCalendarEvent(input: {
         end: { dateTime: end.toISOString() },
       }),
     },
+    { required: "calendar.events", granted: input.granted },
   );
 }
 
@@ -547,6 +590,7 @@ export async function createMailDraft(input: {
   to: string;
   subject: string;
   body: string;
+  granted?: string[];
 }): Promise<CallOutcome<{ id: string }>> {
   const mime = [
     `To: ${input.to}`,
@@ -567,6 +611,10 @@ export async function createMailDraft(input: {
     "gmail",
     "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
     { method: "POST", body: JSON.stringify({ message: { raw } }) },
+    // `gmail.compose` and never `gmail.send`. A grant that somehow carried
+    // send would still not satisfy this, because the required scope is the
+    // narrow one the operation actually needs.
+    { required: "gmail.compose", granted: input.granted },
   );
 }
 
@@ -580,11 +628,13 @@ export async function createMailDraft(input: {
 export async function createSlideDeck(input: {
   title: string;
   slides: Array<{ title: string; body: string }>;
+  granted?: string[];
 }): Promise<CallOutcome<{ id: string; url: string }>> {
   const created = await googleFetch<{ presentationId: string }>(
     "google-slides",
     "https://slides.googleapis.com/v1/presentations",
     { method: "POST", body: JSON.stringify({ title: input.title }) },
+    { required: "presentations", granted: input.granted },
   );
   if (!created.ok) return created;
 
@@ -649,7 +699,7 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
   try {
     // The member URN comes from the OIDC userinfo endpoint.
     const who = await fetch("https://api.linkedin.com/v2/userinfo", {
-      headers: { aumorpheusization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}` },
     });
     if (!who.ok) return { ok: false, error: `userinfo ${who.status}` };
     const { sub } = (await who.json()) as { sub: string };
@@ -657,13 +707,13 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
     const response = await fetch("https://api.linkedin.com/rest/posts", {
       method: "POST",
       headers: {
-        aumorpheusization: `Bearer ${token}`,
+        authorization: `Bearer ${token}`,
         "content-type": "application/json",
         "LinkedIn-Version": process.env.LINKEDIN_API_VERSION ?? "202405",
         "X-Restli-Protocol-Version": "2.0.0",
       },
       body: JSON.stringify({
-        aumorpheus: `urn:li:person:${sub}`,
+        author: `urn:li:person:${sub}`,
         commentary: text,
         visibility: "PUBLIC",
         distribution: { feedDistribution: "MAIN_FEED" },
@@ -692,6 +742,7 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
 export async function appendToLog(
   title: string,
   row: string[],
+  granted?: string[],
 ): Promise<CallOutcome<{ spreadsheetId: string; url: string }>> {
   const known = await readCollection<Record<string, string>>("sheets", {});
   let spreadsheetId = known[title];
@@ -701,6 +752,7 @@ export async function appendToLog(
       "google-sheets",
       "https://sheets.googleapis.com/v4/spreadsheets",
       { method: "POST", body: JSON.stringify({ properties: { title } }) },
+      { required: "drive.file", granted },
     );
     if (!created.ok) return created;
 
@@ -715,6 +767,7 @@ export async function appendToLog(
     "google-sheets",
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     { method: "POST", body: JSON.stringify({ values: [row] }) },
+    { required: "spreadsheets", granted },
   );
   if (!appended.ok) return appended;
 
@@ -759,7 +812,7 @@ export async function postToSlack(
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
-        aumorpheusization: `Bearer ${token}`,
+        authorization: `Bearer ${token}`,
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({ channel: target, text }),

@@ -200,8 +200,8 @@ signal.
 | Amber = attendance state | **Inferred** from colour split across nodes |
 | Routing is domain/keyword-driven | **Inferred** from "when we dive deep into a topic" |
 | Autonomy levels per loop | **Inferred** from the five-stage pipeline structure |
-| Specific agent charters and vocabularies | **Aumorpheused here** — the names are real, the job descriptions are ours |
-| Follower/reach numbers beyond `6.1K` and `10.9K` | **Aumorpheused here** as plausible sample data |
+| Specific agent charters and vocabularies | **Authored here** — the names are real, the job descriptions are ours |
+| Follower/reach numbers beyond `6.1K` and `10.9K` | **Authored here** as plausible sample data |
 
 ## 9. What this repository is
 

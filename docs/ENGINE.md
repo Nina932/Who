@@ -243,7 +243,7 @@ where background timers do not survive. Both call the same idempotent `tick()`.
 ## 8. Connectors
 
 [`lib/connectors.ts`](../lib/connectors.ts). A real Google OAuth
-aumorpheusisation-code flow with refresh, tokens persisted through the same store,
+authorisation-code flow with refresh, tokens persisted through the same store,
 and real API calls on top: Drive file listing, Calendar read and event
 creation, Gmail read and draft creation.
 
