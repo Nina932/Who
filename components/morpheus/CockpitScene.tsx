@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The Thor cockpit, in three dimensions.
+ * The Morpheus cockpit, in three dimensions.
  *
  * Not a diagram of a workforce — a place containing one. The core is a
  * displaced, fresnel-lit body breathing inside a volumetric sky; the agents
@@ -582,7 +582,7 @@ class EffectsBoundary extends Component<
   }
 
   componentDidCatch(error: unknown) {
-    console.error("thor: post-processing disabled —", error);
+    console.error("morpheus: post-processing disabled —", error);
     this.props.onFailure();
   }
 
@@ -625,7 +625,7 @@ export default function CockpitScene({
           typeof WebGL2RenderingContext !== "undefined" &&
           gl.getContext() instanceof WebGL2RenderingContext;
         if (!isWebGL2) {
-          console.warn("thor: WebGL2 unavailable — running without post-processing");
+          console.warn("morpheus: WebGL2 unavailable — running without post-processing");
           setEffects(false);
         }
       }}

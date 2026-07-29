@@ -108,28 +108,28 @@ describe("toBusy", () => {
 
 describe("localHour", () => {
   it("uses the operator's zone, not the host's", () => {
-    const previous = process.env.THOR_TZ;
+    const previous = process.env.MORPHEUS_TZ;
     try {
       // 12:00 UTC is 16:00 in Tbilisi. A UTC host would say "afternoon" at
       // one and "morning" at the other for the very same instant.
-      process.env.THOR_TZ = "Asia/Tbilisi";
+      process.env.MORPHEUS_TZ = "Asia/Tbilisi";
       assert.equal(localHour(NOON), 16);
-      process.env.THOR_TZ = "UTC";
+      process.env.MORPHEUS_TZ = "UTC";
       assert.equal(localHour(NOON), 12);
     } finally {
-      if (previous === undefined) delete process.env.THOR_TZ;
-      else process.env.THOR_TZ = previous;
+      if (previous === undefined) delete process.env.MORPHEUS_TZ;
+      else process.env.MORPHEUS_TZ = previous;
     }
   });
 
   it("falls back to the host rather than throwing on a bad zone", () => {
-    const previous = process.env.THOR_TZ;
+    const previous = process.env.MORPHEUS_TZ;
     try {
-      process.env.THOR_TZ = "Not/AZone";
+      process.env.MORPHEUS_TZ = "Not/AZone";
       assert.equal(localHour(NOON), new Date(NOON).getHours());
     } finally {
-      if (previous === undefined) delete process.env.THOR_TZ;
-      else process.env.THOR_TZ = previous;
+      if (previous === undefined) delete process.env.MORPHEUS_TZ;
+      else process.env.MORPHEUS_TZ = previous;
     }
   });
 });
@@ -172,13 +172,13 @@ describe("hoursLeftToday", () => {
   };
 
   it("gives the whole day before it starts", () => {
-    withEnv({ THOR_TZ: "UTC", THOR_DAY_START: "9", THOR_DAY_END: "18" }, () => {
+    withEnv({ MORPHEUS_TZ: "UTC", MORPHEUS_DAY_START: "9", MORPHEUS_DAY_END: "18" }, () => {
       assert.equal(hoursLeftToday(Date.parse("2025-07-01T06:00:00Z")), 9);
     });
   });
 
   it("shrinks as the day goes", () => {
-    withEnv({ THOR_TZ: "UTC", THOR_DAY_START: "9", THOR_DAY_END: "18" }, () => {
+    withEnv({ MORPHEUS_TZ: "UTC", MORPHEUS_DAY_START: "9", MORPHEUS_DAY_END: "18" }, () => {
       // The whole point: at four in the afternoon you do not have six hours,
       // and a plan that says you do is a plan you will not finish.
       assert.equal(hoursLeftToday(Date.parse("2025-07-01T16:00:00Z")), 2);
@@ -187,13 +187,13 @@ describe("hoursLeftToday", () => {
   });
 
   it("is zero once the day is over", () => {
-    withEnv({ THOR_TZ: "UTC", THOR_DAY_START: "9", THOR_DAY_END: "18" }, () => {
+    withEnv({ MORPHEUS_TZ: "UTC", MORPHEUS_DAY_START: "9", MORPHEUS_DAY_END: "18" }, () => {
       assert.equal(hoursLeftToday(Date.parse("2025-07-01T21:00:00Z")), 0);
     });
   });
 
   it("is measured in the operator's zone", () => {
-    withEnv({ THOR_TZ: "Asia/Tbilisi", THOR_DAY_START: "9", THOR_DAY_END: "18" }, () => {
+    withEnv({ MORPHEUS_TZ: "Asia/Tbilisi", MORPHEUS_DAY_START: "9", MORPHEUS_DAY_END: "18" }, () => {
       // 16:00 in Tbilisi is 12:00 UTC. A UTC host would report six hours left.
       assert.equal(hoursLeftToday(NOON), 2);
     });

@@ -26,7 +26,7 @@ export async function GET() {
   return NextResponse.json({
     running: schedulerRunning(),
     started,
-    mode: process.env.THOR_SCHEDULER === "on" ? "in-process" : "external",
+    mode: process.env.MORPHEUS_SCHEDULER === "on" ? "in-process" : "external",
     schedule: await getSchedule(),
   });
 }

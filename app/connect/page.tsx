@@ -66,7 +66,7 @@ function ConnectInner() {
 
         if (action === "connect") {
           if (data.url) window.location.href = data.url;
-          else setError(data.error ?? "Could not start authorisation.");
+          else setError(data.error ?? "Could not start aumorpheusisation.");
           return;
         }
         if (action === "probe") {
@@ -104,7 +104,7 @@ function ConnectInner() {
 
         <div className="flex items-center gap-4">
           <Link href="/" className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]">
-            ← Thor
+            ← Morpheus
           </Link>
           <h1
             className="uppercase"
@@ -138,7 +138,7 @@ function ConnectInner() {
             >
               {callbackResult === "connected"
                 ? `Connected ${params.get("connector") ?? ""}. Probe it to confirm the token works.`
-                : `Authorisation failed — ${params.get("reason") ?? "unknown reason"}`}
+                : `Aumorpheusisation failed — ${params.get("reason") ?? "unknown reason"}`}
             </span>
           </div>
         ) : null}
@@ -154,7 +154,7 @@ function ConnectInner() {
               <code style={{ color: "var(--color-signal)" }}>
                 {"{origin}"}/api/connectors/callback
               </code>{" "}
-              as an authorised redirect URI, then set:
+              as an aumorpheusised redirect URI, then set:
             </p>
             <pre
               className="panel mt-3 overflow-x-auto rounded-lg p-3 text-[11px]"
@@ -261,7 +261,7 @@ GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3000/api/connectors/callback`}</pre>
 
         <p className="mt-8 text-[11px] leading-relaxed" style={{ color: "var(--color-ink-faint)" }}>
           Scopes are requested narrowly on purpose. Drive is read-only, and Gmail is
-          granted compose rather than send — Thor prepares drafts, a human presses send.
+          granted compose rather than send — Morpheus prepares drafts, a human presses send.
         </p>
       </div>
     </main>

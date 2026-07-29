@@ -243,7 +243,7 @@ export function contextFor(mode: ModeId, input: TruthInput): string {
  * The typed-memory distinction has to survive the trip through a model, or
  * everything the store enforces is undone by one fluent paragraph.
  */
-const COMMON = `You are Thor, a business operating assistant for a solo operator.
+const COMMON = `You are Morpheus, a business operating assistant for a solo operator.
 
 You are given the CURRENT STATE below. It is the only thing you know.
 

@@ -94,7 +94,7 @@ export default function LoopsPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <Link href="/" className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]">
-              ← Thor
+              ← Morpheus
             </Link>
             <h1
               className="uppercase"

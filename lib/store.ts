@@ -4,13 +4,13 @@ import path from "node:path";
 /**
  * Durable state.
  *
- * Thor claims to *learn* — to keep facts, pick up your style, and run loops
+ * Morpheus claims to *learn* — to keep facts, pick up your style, and run loops
  * that get better each time. None of that is true if state dies with the
  * process, so everything is persisted.
  *
  * Two drivers, because the right answer depends on where this runs:
  *
- *   fs      flat JSON under `.thor/` — the default, and deliberately readable.
+ *   fs      flat JSON under `.morpheus/` — the default, and deliberately readable.
  *           A system claiming durable memory should let you audit it with
  *           `cat`. Correct for a long-lived server; wrong on serverless, where
  *           the filesystem is per-instance and ephemeral.
@@ -86,7 +86,7 @@ function createFsDriver(root: string): StoreDriver {
 // ── Upstash Redis (REST) ─────────────────────────────────────────────────
 
 function createRedisDriver(url: string, token: string): StoreDriver {
-  const key = (collection: string) => `thor:${collection.replace(/[^a-z0-9_-]/gi, "")}`;
+  const key = (collection: string) => `morpheus:${collection.replace(/[^a-z0-9_-]/gi, "")}`;
   const versionKey = (collection: string) => `${key(collection)}:v`;
 
   /**
@@ -109,7 +109,7 @@ function createRedisDriver(url: string, token: string): StoreDriver {
   const command = async (parts: string[]): Promise<unknown> => {
     const response = await fetch(url, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: { aumorpheusization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(parts),
       cache: "no-store",
     });
@@ -160,7 +160,7 @@ function selectDriver(): StoreDriver {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (url && token) return createRedisDriver(url, token);
-  return createFsDriver(process.env.THOR_DATA_DIR ?? path.join(process.cwd(), ".thor"));
+  return createFsDriver(process.env.MORPHEUS_DATA_DIR ?? path.join(process.cwd(), ".morpheus"));
 }
 
 let driver: StoreDriver = selectDriver();

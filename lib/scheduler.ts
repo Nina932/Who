@@ -9,7 +9,7 @@
  * Two ways to drive it, because the right one depends on where this runs:
  *
  *   in-process   a timer started on first request — correct for a single
- *                long-lived server, which is how Thor is meant to run
+ *                long-lived server, which is how Morpheus is meant to run
  *   external     POST /api/scheduler, for cron or a platform scheduler on
  *                hosts where background timers do not survive
  *
@@ -186,14 +186,14 @@ let timer: NodeJS.Timeout | null = null;
 /**
  * Start the background timer once per process.
  *
- * Opt-in via THOR_SCHEDULER=on, because on serverless the process is torn down
+ * Opt-in via MORPHEUS_SCHEDULER=on, because on serverless the process is torn down
  * between requests and a timer there is a lie — use the endpoint instead.
  */
 export function ensureSchedulerStarted(): boolean {
   if (timer) return true;
-  if (process.env.THOR_SCHEDULER !== "on") return false;
+  if (process.env.MORPHEUS_SCHEDULER !== "on") return false;
 
-  const intervalMs = Number(process.env.THOR_SCHEDULER_INTERVAL_MS ?? 60_000);
+  const intervalMs = Number(process.env.MORPHEUS_SCHEDULER_INTERVAL_MS ?? 60_000);
   timer = setInterval(() => {
     void tick().catch((error) => console.error("scheduler: tick failed", error));
   }, intervalMs);

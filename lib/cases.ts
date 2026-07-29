@@ -19,11 +19,11 @@
  *      me. That single rule is the difference between a system that tracks
  *      work and one that maintains continuity.
  *
- *   3. **The next action is derived, never authored.** Layer one is the
+ *   3. **The next action is derived, never aumorpheused.** Layer one is the
  *      workflow: a stage knows what it needs. Layer two is policy: silence
  *      past a patience threshold flips the turn. Layer three is
  *      interpretation, which only ever *proposes* (see `proposeEvent`). Layer
- *      four is you, through the authority model.
+ *      four is you, through the aumorpheusity model.
  *
  * `/week` sits downstream of all of this. It allocates hours across actions
  * that were derived here; it does not invent them.
@@ -63,12 +63,12 @@ export const TURN_LABEL: Record<Turn, string> = {
 };
 
 /**
- * How far Thor may go without you, per action.
+ * How far Morpheus may go without you, per action.
  *
  * Escalating is a decision you make once per action type, not a global switch,
  * because "draft the invoice" and "send the invoice" are not the same risk.
  */
-export type Authority =
+export type Aumorpheusity =
   /** Say what should happen. Nothing is produced. */
   | "recommend"
   /** Produce the artefact — draft, document, event — and stop. */
@@ -76,14 +76,14 @@ export type Authority =
   /** Do it, and tell you afterwards. */
   | "execute";
 
-export const AUTHORITY_LABEL: Record<Authority, string> = {
+export const AUMORPHEUSITY_LABEL: Record<Aumorpheusity, string> = {
   recommend: "Recommends",
   prepare: "Prepares, you send",
   execute: "Acts, then tells you",
 };
 
 /** Who caused an event. */
-export type Actor = "operator" | "counterparty" | "system" | "thor";
+export type Actor = "operator" | "counterparty" | "system" | "morpheus";
 
 // ── Events ───────────────────────────────────────────────────────────────
 
@@ -115,8 +115,8 @@ export interface StageAction {
   title: string;
   /** Honest hours. This is what `/week` spends its budget in. */
   hours: number;
-  authority: Authority;
-  /** What Thor produces before handing it back, when authority allows. */
+  aumorpheusity: Aumorpheusity;
+  /** What Morpheus produces before handing it back, when aumorpheusity allows. */
   prepares?: string;
   /** Base factor scores for `/week`. Risk and value adjust them upward. */
   factors: Partial<Record<FactorKey, number>>;
@@ -192,16 +192,16 @@ export const LEAD_TO_CASH: Workflow = {
       id: "inbound",
       label: "New enquiry",
       loop: "inbound",
-      // Thor's turn: reading an enquiry and judging whether it is real work is
+      // Morpheus's turn: reading an enquiry and judging whether it is real work is
       // exactly the job a model should do first.
       turn: "system",
       waiting: {
-        on: "Thor, qualifying",
+        on: "Morpheus, qualifying",
         patienceDays: 1,
         escalation: {
-          title: "Qualify {counterparty} yourself — Thor did not",
+          title: "Qualify {counterparty} yourself — Morpheus did not",
           hours: 0.25,
-          authority: "recommend",
+          aumorpheusity: "recommend",
           factors: { revenue: 0.5, decay: 0.8, unblocks: 0.9, effort: 0.1 },
         },
       },
@@ -219,7 +219,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Decide whether {counterparty} is real work",
         hours: 0.25,
-        authority: "recommend",
+        aumorpheusity: "recommend",
         prepares: "The signals for and against, already gathered",
         factors: { revenue: 0.5, decay: 0.8, unblocks: 0.9, effort: 0.1 },
       },
@@ -233,7 +233,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Send {counterparty} the proposal",
         hours: 2,
-        authority: "prepare",
+        aumorpheusity: "prepare",
         prepares: "A drafted proposal in your voice, ready to read and send",
         factors: {
           revenue: 0.85,
@@ -257,7 +257,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Follow up — {counterparty} has had the proposal {days} days",
           hours: 0.25,
-          authority: "prepare",
+          aumorpheusity: "prepare",
           prepares: "A follow-up that does not read as a nag",
           factors: { revenue: 0.7, decay: 0.85, obligation: 0.2, effort: 0.05 },
         },
@@ -272,7 +272,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Start the work for {counterparty}",
         hours: 2,
-        authority: "recommend",
+        aumorpheusity: "recommend",
         factors: { obligation: 0.8, decay: 0.4, unblocks: 0.8, revenue: 0.4, effort: 0.2 },
       },
       on: { scheduled: "delivery-scheduled", started: "delivery-active" },
@@ -291,7 +291,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Deliver for {counterparty} — the booked date is here",
           hours: 8,
-          authority: "recommend",
+          aumorpheusity: "recommend",
           factors: { obligation: 0.95, decay: 0.9, revenue: 0.6, effort: 0.9 },
         },
       },
@@ -305,7 +305,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Finish the work for {counterparty}",
         hours: 8,
-        authority: "recommend",
+        aumorpheusity: "recommend",
         factors: {
           obligation: 0.95,
           revenue: 0.6,
@@ -328,7 +328,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Ask {counterparty} to sign off — delivered {days} days ago",
           hours: 0.25,
-          authority: "prepare",
+          aumorpheusity: "prepare",
           prepares: "The sign-off request, with what was delivered attached",
           // Unacceptance is the quietest way an invoice never gets sent.
           factors: { revenue: 0.8, obligation: 0.4, decay: 0.9, unblocks: 0.95, effort: 0.05 },
@@ -344,7 +344,7 @@ export const LEAD_TO_CASH: Workflow = {
       action: {
         title: "Invoice {counterparty} for {value}",
         hours: 0.25,
-        authority: "prepare",
+        aumorpheusity: "prepare",
         prepares: "The invoice, filled in from the case — you press send",
         factors: { revenue: 0.95, decay: 0.7, unblocks: 0.6, effort: 0.05, irreversible: 0.1 },
       },
@@ -361,7 +361,7 @@ export const LEAD_TO_CASH: Workflow = {
         escalation: {
           title: "Chase {value} from {counterparty} — {days} days out",
           hours: 0.5,
-          authority: "prepare",
+          aumorpheusity: "prepare",
           prepares: "The chase, escalating in tone with each one sent",
           factors: { revenue: 0.95, decay: 0.75, obligation: 0.3, effort: 0.1 },
         },
@@ -429,7 +429,7 @@ export interface NextAction {
   loop: LoopDomain;
   title: string;
   hours: number;
-  authority: Authority;
+  aumorpheusity: Aumorpheusity;
   prepares?: string;
   factors: Record<string, number>;
   /** Why this is the next action — shown so no action is ever anonymous. */
@@ -577,7 +577,7 @@ export function project(record: StoredCase, now: number): CaseView {
     loop: stage.loop,
     title: fill(spec.title, withValue, currency, days),
     hours: spec.hours,
-    authority: spec.authority,
+    aumorpheusity: spec.aumorpheusity,
     prepares: spec.prepares,
     factors: { ...spec.factors } as Record<string, number>,
     why,
@@ -625,7 +625,7 @@ export function project(record: StoredCase, now: number): CaseView {
         action = build(
           escalation,
           stage.turn === "system"
-            ? `Thor has held this for ${Math.round(quietDays)} days without moving it. It is yours now.`
+            ? `Morpheus has held this for ${Math.round(quietDays)} days without moving it. It is yours now.`
             : `Silent for ${Math.round(quietDays)} days — past the ${patienceDays}-day mark for this stage.`,
           "policy",
           quietDays,
@@ -786,7 +786,7 @@ export function availableEvents(view: CaseView): string[] {
  * One case per turn state, because the turn model is the claim and a demo
  * where everything is "my turn" demonstrates nothing. Money quietly overdue,
  * a proposal genuinely still with them, work awaiting a signature, a booking
- * ahead, an enquiry Thor is reading, one blocked on somebody else, and one
+ * ahead, an enquiry Morpheus is reading, one blocked on somebody else, and one
  * finished.
  *
  * Marked `demo` everywhere they appear and removable in one click — invented
@@ -826,7 +826,7 @@ export function exampleCases(now: number): StoredCase[] {
     // My turn, by policy: 38 days past 30-day terms is not "still waiting".
     demo("invoice", "Brand refresh, phase one", "Halden & Co", 4200, 110, [
       ev("opened", 110, "counterparty", "Enquiry through the site."),
-      ev("qualified", 109, "thor", "Budget stated, timeline realistic."),
+      ev("qualified", 109, "morpheus", "Budget stated, timeline realistic."),
       ev("proposal-sent", 106, "operator"),
       ev("won", 98, "counterparty", "Signed."),
       ev("started", 96, "operator"),
@@ -838,14 +838,14 @@ export function exampleCases(now: number): StoredCase[] {
     // Their turn, and genuinely so — three days is not yet a chase.
     demo("proposal", "Website rebuild", "Ridgeway Labs", 9000, 12, [
       ev("opened", 12, "counterparty", "Intro call went well."),
-      ev("qualified", 11, "thor"),
+      ev("qualified", 11, "morpheus"),
       ev("proposal-sent", 3, "operator", "Sent the scoped version."),
     ]),
 
     // Their turn: delivered, unsigned, and the clock has two days left on it.
     demo("signoff", "Onboarding automation", "Verity Group", 2800, 40, [
       ev("opened", 40, "counterparty"),
-      ev("qualified", 39, "thor"),
+      ev("qualified", 39, "morpheus"),
       ev("proposal-sent", 36, "operator"),
       ev("won", 30, "counterparty"),
       ev("started", 28, "operator"),
@@ -855,13 +855,13 @@ export function exampleCases(now: number): StoredCase[] {
     // My turn, straight from the workflow: the stage owes a proposal.
     demo("fresh", "Data pipeline audit", "Ostara", 6500, 2, [
       ev("opened", 2, "counterparty", "Referred by a past client."),
-      ev("qualified", 1, "thor", "Clear scope, decision-maker in the thread."),
+      ev("qualified", 1, "morpheus", "Clear scope, decision-maker in the thread."),
     ]),
 
     // Scheduled: booked, far enough out to be nobody's problem yet.
     demo("booked", "Migration weekend", "Calder Institute", 11000, 26, [
       ev("opened", 26, "counterparty"),
-      ev("qualified", 25, "thor"),
+      ev("qualified", 25, "morpheus"),
       ev("proposal-sent", 22, "operator"),
       ev("won", 14, "counterparty"),
       ev("scheduled", 13, "operator", "Booked for the 14th.", {
@@ -869,7 +869,7 @@ export function exampleCases(now: number): StoredCase[] {
       }),
     ]),
 
-    // System turn: arrived this morning, Thor is reading it.
+    // System turn: arrived this morning, Morpheus is reading it.
     demo("arriving", "Unspecified — enquiry in progress", "Marrow Studio", 0, 0.2, [
       ev("opened", 0.2, "counterparty", "Long message, budget not stated."),
     ]),
@@ -877,7 +877,7 @@ export function exampleCases(now: number): StoredCase[] {
     // Blocked: moving is not possible, and the reason is named.
     demo("blocked", "Reporting rebuild", "Ashgrove Partners", 7400, 55, [
       ev("opened", 55, "counterparty"),
-      ev("qualified", 54, "thor"),
+      ev("qualified", 54, "morpheus"),
       ev("proposal-sent", 50, "operator"),
       ev("won", 44, "counterparty"),
       ev("started", 42, "operator"),
@@ -887,7 +887,7 @@ export function exampleCases(now: number): StoredCase[] {
     // Complete, kept visible: a closed case is evidence, not clutter.
     demo("paid", "Launch campaign", "Tessellate", 3300, 150, [
       ev("opened", 150, "counterparty"),
-      ev("qualified", 149, "thor"),
+      ev("qualified", 149, "morpheus"),
       ev("proposal-sent", 146, "operator"),
       ev("won", 140, "counterparty"),
       ev("started", 138, "operator"),

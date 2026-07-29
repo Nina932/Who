@@ -18,6 +18,7 @@
  * side effect can only happen after a human said GO.
  */
 
+import { withAuthority } from "./authority-runtime";
 import {
   CONNECTORS_BY_ID,
   appendToLog,
@@ -36,11 +37,41 @@ export interface ToolResult {
 export interface ToolSpec {
   name: string;
   connectorId: ConnectorId;
+  /**
+   * Which registered capability this tool exercises.
+   *
+   * Declared, not decided. A tool that checked its own permission would be a
+   * tool that could be argued out of it; this names what it is and the answer
+   * comes from `withAuthority`.
+   */
+  capabilityId: string;
   /** Told to the model, so it knows what it is producing arguments for. */
   purpose: string;
   /** The exact JSON shape the model must return. */
   schemaHint: string;
   run: (input: unknown) => Promise<ToolResult>;
+}
+
+/**
+ * Run a tool through the authority layer.
+ *
+ * Every path that touches the world goes through here. A refusal is a result,
+ * not an exception — the loop records what was refused and why, which is the
+ * artefact worth having when somebody asks later why nothing was sent.
+ */
+export async function runTool(tool: ToolSpec, input: unknown, grantId?: string): Promise<ToolResult> {
+  const outcome = await withAuthority(tool.capabilityId, async () => tool.run(input), { grantId });
+
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      summary: `Not run. ${outcome.reason}${
+        outcome.refusal === "needs-approval" ? " Approve it on the Authority screen and it will run." : ""
+      }`,
+    };
+  }
+
+  return outcome.value;
 }
 
 // ── Validation helpers ───────────────────────────────────────────────────
@@ -75,6 +106,8 @@ export const TOOLS: Record<string, ToolSpec> = {
   "calendar.schedule": {
     name: "calendar.schedule",
     connectorId: "google-calendar",
+    // Own calendar only. Inviting other people is `calendar.invite`, level 4.
+    capabilityId: "calendar.propose",
     purpose:
       "Place each approved post on the operator's calendar at its publish time, so the week is visible rather than living in a document.",
     schemaHint: `{"events":[{"summary":string,"description":string,"startsAt":"ISO 8601 datetime in the future","minutes":number}]}`,
@@ -131,6 +164,8 @@ export const TOOLS: Record<string, ToolSpec> = {
   "gmail.draft": {
     name: "gmail.draft",
     connectorId: "gmail",
+    // Draft, never send. The split is the whole reason both exist.
+    capabilityId: "mail.draft",
     purpose:
       "Save the approved reply as a Gmail draft. It is never sent — the operator presses send.",
     schemaHint: `{"to":string,"subject":string,"body":string}`,
@@ -157,12 +192,13 @@ export const TOOLS: Record<string, ToolSpec> = {
   "sheets.log": {
     name: "sheets.log",
     connectorId: "google-sheets",
+    capabilityId: "case.update",
     purpose:
       "Append one row to a running log spreadsheet, so results can be compared across weeks instead of living in prose.",
     schemaHint: `{"log":string,"row":[string]}`,
     async run(input) {
       const root = asRecord(input);
-      const log = asString(root?.log) ?? "Thor — run log";
+      const log = asString(root?.log) ?? "Morpheus — run log";
       const row = Array.isArray(root?.row)
         ? root.row.map((cell) => (cell === null || cell === undefined ? "" : String(cell)))
         : null;
@@ -183,6 +219,7 @@ export const TOOLS: Record<string, ToolSpec> = {
   "slides.deck": {
     name: "slides.deck",
     connectorId: "google-slides",
+    capabilityId: "note.write",
     purpose: "Turn the approved outline into a Google Slides deck.",
     schemaHint: `{"title":string,"slides":[{"title":string,"body":string}]}`,
     async run(input) {

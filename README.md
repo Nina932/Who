@@ -1,11 +1,13 @@
-# Thor
+# Morpheus
 
 A voice-first cockpit for a workforce of specialist AI agents — an independent
 reconstruction of the product Reznikov Engineering demonstrates publicly as
 Apex — *"the autonomous AI co-founder that learns, runs, and scales your solo
-business."* Their product is Apex; this implementation is Thor.
+business."* Their product is Apex; this implementation is Morpheus.
 
-Four docs sit behind this: **[`docs/ASSISTANT.md`](docs/ASSISTANT.md)** for
+Five docs sit behind this: **[`docs/AUTHORITY.md`](docs/AUTHORITY.md)** for
+what Morpheus may do without asking, the credential broker and the model
+router; **[`docs/ASSISTANT.md`](docs/ASSISTANT.md)** for
 the assistant — typed memory, product state, the brief and the intelligence
 filter; **[`docs/CASES.md`](docs/CASES.md)** for the operational core beneath
 it — cases, events, whose turn it is;
@@ -18,7 +20,7 @@ transcripts that verify each one.
 
 ## The idea
 
-You talk. Thor decides *who* should answer, pulls that specialist into the
+You talk. Morpheus decides *who* should answer, pulls that specialist into the
 conversation in front of you, and tells you which of your own words caused it.
 There is no agent picker, because picking your own expert is the work you were
 trying to delegate.
@@ -28,6 +30,18 @@ trying to delegate.
 **Overview** — one full-bleed canvas. A live core with eighteen agents in orbit,
 ambient context (clock, weather, greeting, almanac), three status lamps, and a
 transcript rail that stamps every reply with the seat it came from.
+
+**Authority** (`/authority`) — what Morpheus may do without asking. Four
+levels: observe, prepare, execute-reversible, ask-first. **Level 4 cannot be
+raised away** — the ceiling saturates at 3, and sending, publishing, deploying,
+deleting and spending always ask, at every setting. A boundary that can be
+switched off is a default.
+
+The model never holds a credential. It holds a *grant*: an opaque id naming one
+capability, valid 90 seconds and one use, redeemed server-side. Every issue,
+redemption and refusal is audited. The Loops Engine goes through it — a loop
+running past its human gate is still not permission to act. Full write-up in
+**[`docs/AUTHORITY.md`](docs/AUTHORITY.md)**.
 
 **Brief** (`/brief`) — the assistant, and the front door. Your day, derived
 rather than composed: every item traces to a case's turn, a release blocker or
@@ -99,7 +113,7 @@ background, and surfaces the matched terms. Amber is reserved for this and for
 nothing else.
 
 **Voice** — continuous recognition with a four-state floor model and a hard
-interrupt. Tapping while Thor is speaking cancels playback mid-sentence and
+interrupt. Tapping while Morpheus is speaking cancels playback mid-sentence and
 hands the floor straight back. A typed path runs through the identical
 orchestrator for when the room isn't quiet.
 
@@ -171,14 +185,15 @@ rather than pretending.
 For the full stack, set the keys and restart. macOS and Linux:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # Opus (judgment), Sonnet (vision), Haiku (memory)
-export GOOGLE_API_KEY=...             # Gemini Flash (quick), Pro (hard)
-export THOR_OPERATOR=Nino             # who the brief greets
-export THOR_TZ=Asia/Tbilisi           # your zone — the brief is derived server-side
+export ANTHROPIC_API_KEY=sk-ant-...   # Opus (judgment), Sonnet (vision)
+export GOOGLE_API_KEY=...             # Gemini Pro (hard), Flash (quick fallback)
+export GROQ_API_KEY=gsk_...           # GPT-OSS 120B — the fast/voice path
+export MORPHEUS_OPERATOR=Nino             # who the brief greets
+export MORPHEUS_TZ=Asia/Tbilisi           # your zone — the brief is derived server-side
 npm run dev
 ```
 
-`THOR_TZ` matters more than it looks. The brief is built on the server, so
+`MORPHEUS_TZ` matters more than it looks. The brief is built on the server, so
 without it the greeting and "hours left today" use the host's clock rather
 than yours.
 
@@ -222,11 +237,11 @@ app/
   products/page.tsx     Product phase, blockers, milestone evidence, advice
   api/assistant/route.ts  Brief, product state, knowledge, intelligence
   api/cases/route.ts    The case ledger — reads project, writes append
-  api/thor/route.ts     Orchestrator: attendance + routing + memory
+  api/morpheus/route.ts     Orchestrator: attendance + routing + memory
 components/
   cases/                Turn and risk chips, the shared loader
-  thor/CockpitScene.tsx 3D cockpit: nebula, displaced core, orbits, bloom
-  thor/shaders.ts       GLSL for the sky and the core
+  morpheus/CockpitScene.tsx 3D cockpit: nebula, displaced core, orbits, bloom
+  morpheus/shaders.ts       GLSL for the sky and the core
   HudHeader.tsx         Ambient context and status lamps
   SpecialistCallout.tsx Who was called in, and on which words
   VoiceStatus.tsx       Whose turn it is + the interrupt
@@ -235,6 +250,11 @@ components/
   AgentInspector.tsx    Per-agent charter and routing vocabulary
   social/               Platform cards, goal loop pipelines
 lib/
+  authority.ts          Four levels, the capability registry, the policy engine
+  broker.ts             Short-lived grants, single use, audited
+  authority-runtime.ts  The live broker and withAuthority — the only path out
+  intent.ts             Answer modes: direct / business / code / action
+  voice.ts              The Morpheus register, and delivery under risk
   knowledge.ts          Typed memory: fact / decision / hypothesis / guess
   advisory.ts           The seven-field shape every recommendation must take
   products.ts           Product phase, blockers, exit conditions, drift rules
@@ -275,7 +295,7 @@ read from that one array.
 ## Verification
 
 ```bash
-npm run verify        # typecheck + 283 tests + build, no API keys needed
+npm run verify        # typecheck + 346 tests + build, no API keys needed
 npm test              # just the tests
 npm run verify:models # checks every configured model ID actually exists
 ```

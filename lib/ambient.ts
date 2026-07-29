@@ -1,6 +1,6 @@
 /**
  * Ambient context — the strip of the cockpit that is true whether or not you
- * are talking to Thor: time, weather, who you are, and one thing that
+ * are talking to Morpheus: time, weather, who you are, and one thing that
  * happened on this date. It exists to make the machine feel present rather
  * than summoned.
  */
@@ -25,10 +25,10 @@ export interface AmbientConfig {
  *
  * Set in `.env.local`:
  *
- *   THOR_OPERATOR=Nina
- *   THOR_CITY=Tbilisi
- *   THOR_LAT=41.7151
- *   THOR_LON=44.8271
+ *   MORPHEUS_OPERATOR=Nina
+ *   MORPHEUS_CITY=Tbilisi
+ *   MORPHEUS_LAT=41.7151
+ *   MORPHEUS_LON=44.8271
  *
  * Read on the server and delivered through /api/ambient rather than inlined
  * with a NEXT_PUBLIC_ prefix, so changing your name takes effect on the next
@@ -50,7 +50,7 @@ function env(name: string): string {
 /**
  * The operator this build belongs to.
  *
- * A default rather than a hardcoding: `THOR_OPERATOR` still wins, so a second
+ * A default rather than a hardcoding: `MORPHEUS_OPERATOR` still wins, so a second
  * install greets whoever set it. The earlier blank default was right when the
  * name came from someone else's screenshot and wrong once this became a
  * particular person's cockpit — an assistant that will not say your name is
@@ -60,10 +60,10 @@ const DEFAULT_OPERATOR = "Nino";
 
 export const AMBIENT: AmbientConfig = {
   get operator() {
-    return env("THOR_OPERATOR") || DEFAULT_OPERATOR;
+    return env("MORPHEUS_OPERATOR") || DEFAULT_OPERATOR;
   },
   get city() {
-    return env("THOR_CITY");
+    return env("MORPHEUS_CITY");
   },
   temperature: 0,
   conditions: "",
@@ -79,11 +79,11 @@ export const AMBIENT: AmbientConfig = {
  * operator with "Good evening" over breakfast, which is the kind of small
  * wrongness that makes everything else on the page feel guessed at.
  *
- * `THOR_TZ` is an IANA zone (`Asia/Tbilisi`). Unset falls back to the host's
+ * `MORPHEUS_TZ` is an IANA zone (`Asia/Tbilisi`). Unset falls back to the host's
  * zone, which is correct when you run this on your own machine.
  */
 export function timeZone(): string | undefined {
-  return env("THOR_TZ") || undefined;
+  return env("MORPHEUS_TZ") || undefined;
 }
 
 export function localHour(at: number = Date.now()): number {
@@ -105,8 +105,8 @@ export function localHour(at: number = Date.now()): number {
 
 /** The hours you actually work, so "how much of today is left" has meaning. */
 export function workingDay(): { start: number; end: number } {
-  const start = Number(env("THOR_DAY_START"));
-  const end = Number(env("THOR_DAY_END"));
+  const start = Number(env("MORPHEUS_DAY_START"));
+  const end = Number(env("MORPHEUS_DAY_END"));
   return {
     start: Number.isFinite(start) && start > 0 ? start : 9,
     end: Number.isFinite(end) && end > 0 ? end : 18,
@@ -148,8 +148,8 @@ export function hoursLeftToday(at: number = Date.now()): number {
 
 /** Coordinates for the weather readout, or null when unset. */
 export function coordinates(): { lat: string; lon: string } | null {
-  const lat = env("THOR_LAT");
-  const lon = env("THOR_LON");
+  const lat = env("MORPHEUS_LAT");
+  const lon = env("MORPHEUS_LON");
   return lat && lon ? { lat, lon } : null;
 }
 

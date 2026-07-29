@@ -32,7 +32,7 @@ export interface Source {
 
 /**
  * Defaults chosen for a stack that is databases, deployment, agents and
- * models. Override wholesale with `THOR_FEEDS` — a comma-separated list of
+ * models. Override wholesale with `MORPHEUS_FEEDS` — a comma-separated list of
  * `name|url` pairs — because whose feed this should be is not my call.
  */
 export const DEFAULT_SOURCES: Source[] = [
@@ -69,7 +69,7 @@ export const DEFAULT_SOURCES: Source[] = [
 ];
 
 export function configuredSources(): Source[] {
-  const raw = process.env.THOR_FEEDS?.trim();
+  const raw = process.env.MORPHEUS_FEEDS?.trim();
   if (!raw) return DEFAULT_SOURCES;
 
   return raw

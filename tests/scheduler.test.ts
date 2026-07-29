@@ -14,8 +14,8 @@ let tmp: string;
 let scheduler: typeof import("../lib/scheduler");
 
 before(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "thor-sched-"));
-  process.env.THOR_DATA_DIR = tmp;
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "morpheus-sched-"));
+  process.env.MORPHEUS_DATA_DIR = tmp;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.GOOGLE_API_KEY;
   scheduler = await import("../lib/scheduler");

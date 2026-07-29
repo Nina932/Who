@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 /**
  * A gate in front of the mutating endpoints.
  *
- * Thor's write endpoints approve autonomous work, delete memory and spend
+ * Morpheus's write endpoints approve autonomous work, delete memory and spend
  * money on model calls. On localhost that is fine; the moment the port is
  * reachable by anything else it is not, and this build had no check at all.
  *
@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
  *
  *   origin  cross-site requests are rejected outright, so a random page cannot
  *           drive the API from a victim's browser
- *   secret  when THOR_API_SECRET is set, every mutating call must present it
+ *   secret  when MORPHEUS_API_SECRET is set, every mutating call must present it
  *
  * The secret is opt-in because forcing one on a local single-user cockpit
  * would just get exported into a shell profile and forgotten. Anything beyond
@@ -49,17 +49,17 @@ export function guardMutation(request: Request): GuardFailure | null {
     };
   }
 
-  const secret = process.env.THOR_API_SECRET;
+  const secret = process.env.MORPHEUS_API_SECRET;
   if (!secret) return null;
 
   const presented =
-    request.headers.get("x-thor-secret") ??
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    request.headers.get("x-morpheus-secret") ??
+    request.headers.get("aumorpheusization")?.replace(/^Bearer\s+/i, "");
 
   if (presented !== secret) {
     return {
       response: NextResponse.json(
-        { error: "Missing or invalid THOR_API_SECRET." },
+        { error: "Missing or invalid MORPHEUS_API_SECRET." },
         { status: 401 },
       ),
     };

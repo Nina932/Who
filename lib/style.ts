@@ -5,7 +5,7 @@
  * button.
  *
  * The signal is the *diff*, not the final text. When the operator rewrites a
- * draft, the difference between what Thor wrote and what shipped is the most
+ * draft, the difference between what Morpheus wrote and what shipped is the most
  * honest style data available — nobody describes their own voice accurately,
  * but everybody corrects it consistently.
  *
@@ -19,7 +19,7 @@ import { id, mutate, readCollection } from "./store";
 
 export interface EditSample {
   id: string;
-  /** What Thor produced. */
+  /** What Morpheus produced. */
   draft: string;
   /** What the operator actually shipped. */
   edited: string;
@@ -252,7 +252,7 @@ export async function moreMyStyle(text: string): Promise<{ text: string; live: b
     return {
       text,
       live: false,
-      note: "No style learned yet — edit a few drafts and Thor will pick it up.",
+      note: "No style learned yet — edit a few drafts and Morpheus will pick it up.",
     };
   }
 

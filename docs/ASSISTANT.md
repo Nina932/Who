@@ -136,8 +136,8 @@ wherever the process runs. A UTC host greeted a UTC+4 operator with "Good
 evening" over breakfast — small, and the kind of small that makes everything
 else on the page feel guessed at.
 
-`THOR_TZ` is an IANA zone and is used for the greeting and for the working
-day. `THOR_DAY_START` / `THOR_DAY_END` bound the day, and **planned capacity
+`MORPHEUS_TZ` is an IANA zone and is used for the greeting and for the working
+day. `MORPHEUS_DAY_START` / `MORPHEUS_DAY_END` bound the day, and **planned capacity
 is capped by what is left of it**: at four in the afternoon you do not have
 six hours, and a plan that says you do is a plan you will not finish.
 
@@ -212,7 +212,7 @@ would match roughly every technology article ever written.
 Irrelevant items are dropped **at ingestion** rather than stored and filtered
 later — a store that accumulates every headline is a news database, and the
 first time it is slow the temptation is to show it unfiltered. Sources are
-configured with `THOR_FEEDS`; a dead one is reported by name rather than
+configured with `MORPHEUS_FEEDS`; a dead one is reported by name rather than
 folded into a silent "nothing new", which is indistinguishable from a quiet
 week and is how every feed reader ends up lying.
 

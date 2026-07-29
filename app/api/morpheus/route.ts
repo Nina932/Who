@@ -34,7 +34,7 @@ export const dynamic = "force-dynamic";
 
 const MAX_HISTORY = 12;
 
-interface ThorRequest {
+interface MorpheusRequest {
   utterance?: unknown;
   history?: unknown;
   forceAgentId?: unknown;
@@ -50,9 +50,9 @@ export async function POST(request: Request) {
   const blocked = guardMutation(request);
   if (blocked) return blocked.response;
 
-  let body: ThorRequest;
+  let body: MorpheusRequest;
   try {
-    body = (await request.json()) as ThorRequest;
+    body = (await request.json()) as MorpheusRequest;
   } catch {
     return NextResponse.json({ error: "Malformed request body." }, { status: 400 });
   }
@@ -82,8 +82,8 @@ export async function POST(request: Request) {
 
   const system = [
     agent
-      ? `You are the ${agent.name} seat inside Thor — an autonomous AI co-founder that runs a solo operator's business.`
-      : "You are Thor, an autonomous AI co-founder.",
+      ? `You are the ${agent.name} seat inside Morpheus — an autonomous AI co-founder that runs a solo operator's business.`
+      : "You are Morpheus, an autonomous AI co-founder.",
     agent ? `Your family: ${FAMILY_LABEL[agent.family]}.` : "",
     agent ? `Your charter: ${agent.charter}` : "",
     "",

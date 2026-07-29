@@ -11,16 +11,16 @@
 import Link from "next/link";
 import NyxCoreMark from "@/components/brand/NyxCoreMark";
 import {
-  AUTHORITY_LABEL,
+  AUMORPHEUSITY_LABEL,
   TURN_LABEL,
-  type Authority,
+  type Aumorpheusity,
   type CaseView,
   type RiskLevel,
   type Turn,
 } from "@/lib/cases";
 
 export const TURN_COLOR: Record<Turn, string> = {
-  // Amber is Specialist Attendance elsewhere in Thor and is not borrowed here.
+  // Amber is Specialist Attendance elsewhere in Morpheus and is not borrowed here.
   mine: "var(--color-signal)",
   theirs: "var(--color-ink-soft)",
   system: "var(--color-violet)",
@@ -64,10 +64,10 @@ export function RiskDot({ level, title }: { level: RiskLevel; title?: string }) 
   );
 }
 
-export function AuthorityChip({ authority }: { authority: Authority }) {
+export function AumorpheusityChip({ aumorpheusity }: { aumorpheusity: Aumorpheusity }) {
   return (
     <span className="label" style={{ color: "var(--color-ink-faint)" }}>
-      Thor {AUTHORITY_LABEL[authority].toLowerCase()}
+      Morpheus {AUMORPHEUSITY_LABEL[aumorpheusity].toLowerCase()}
     </span>
   );
 }
@@ -108,7 +108,7 @@ export function SurfaceHeader({
             href="/"
             className="chip px-3 py-1.5 label transition-colors hover:text-[color:var(--color-signal)]"
           >
-            ← Thor
+            ← Morpheus
           </Link>
           <NyxCoreMark size={30} detail={false} />
           <h1
@@ -129,6 +129,7 @@ export function SurfaceHeader({
           ["/cases", "Cases"],
           ["/waiting", "Waiting"],
           ["/week", "The week"],
+          ["/authority", "Authority"],
           ["/loops", "Automations"],
         ].map(([href, label]) => (
           <Link

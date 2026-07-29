@@ -4,7 +4,7 @@
  * The Overview cockpit.
  *
  * One screen, no chrome, no sidebar: the core, the workforce around it, and
- * whatever context is true right now. Every other surface in Thor is reached
+ * whatever context is true right now. Every other surface in Morpheus is reached
  * from here and returns here.
  */
 
@@ -27,7 +27,7 @@ import {
 import { useVoice } from "@/lib/useVoice";
 
 // WebGL cannot render on the server, and the scene is the whole page.
-const CockpitScene = dynamic(() => import("@/components/thor/CockpitScene"), {
+const CockpitScene = dynamic(() => import("@/components/morpheus/CockpitScene"), {
   ssr: false,
   loading: () => (
     <div className="absolute inset-0 grid place-items-center gap-5">
@@ -93,7 +93,7 @@ export default function Cockpit() {
       setAttendance(optimistic);
 
       try {
-        const response = await fetch("/api/thor", {
+        const response = await fetch("/api/morpheus", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ utterance: text, history, forceAgentId }),

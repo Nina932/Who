@@ -50,7 +50,7 @@ states, and five of them mean *you are not the blocker*:
 | --- | --- |
 | **My turn** | The stage needs something from you |
 | **Their turn** | A live obligation held by someone else, with a clock on it |
-| **System turn** | Thor is working it |
+| **System turn** | Morpheus is working it |
 | **Scheduled** | Committed to a date that has not arrived |
 | **Blocked** | Something outside the process has stopped it |
 | **Complete** | Closed, won or lost |
@@ -64,9 +64,9 @@ the case leaves that page and appears on `/today` by itself.
 Blocked sorts to the top of `/waiting` regardless of clocks, because it is the
 one state where nobody is working *and* no clock is running.
 
-## 4. The next action is derived, never authored
+## 4. The next action is derived, never aumorpheused
 
-Four layers, in order, and each one has less authority than the one before it:
+Four layers, in order, and each one has less aumorpheusity than the one before it:
 
 1. **Workflow.** A stage knows what it needs. `invoice-due` needs an invoice.
 2. **Policy.** Silence past `patienceDays` flips the turn and swaps in the
@@ -78,9 +78,9 @@ Four layers, in order, and each one has less authority than the one before it:
    anything outside it is discarded rather than coerced to the nearest match.
    The result requires a human to commit it. With no API key it returns the
    missing key, not a guess.
-4. **You.** The authority model, below.
+4. **You.** The aumorpheusity model, below.
 
-## 5. Authority
+## 5. Aumorpheusity
 
 Per action, not a global switch — "draft the invoice" and "send the invoice"
 are not the same risk.

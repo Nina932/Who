@@ -1,7 +1,7 @@
 /**
  * The Loops Engine.
  *
- * "It enables Thor to run semi-autonomous workflows (with a human review
+ * "It enables Morpheus to run semi-autonomous workflows (with a human review
  * stage), observe results, learn from feedback, and constantly refine its
  * approach."
  *
@@ -16,7 +16,7 @@
  */
 
 import { callRole, parseJson, type ModelRole } from "./models";
-import { TOOLS, toolInstruction } from "./tools";
+import { TOOLS, runTool, toolInstruction } from "./tools";
 import { postToSlack } from "./connectors";
 import { recall, renderForPrompt as renderMemory } from "./memory";
 import { getProfile, renderForPrompt as renderStyle } from "./style";
@@ -278,7 +278,7 @@ async function patchRun(runId: string, patch: Partial<LoopRun>): Promise<LoopRun
 
 /**
  * The context a step is executed with: the loop's objective, everything
- * produced earlier in this run, what Thor remembers, the operator's voice, and
+ * produced earlier in this run, what Morpheus remembers, the operator's voice, and
  * — critically — what previous runs of this loop learned.
  */
 async function buildSystemPrompt(
@@ -291,7 +291,7 @@ async function buildSystemPrompt(
   const style = await getProfile();
 
   const sections = [
-    `You are executing one step of "${loop.name}", a standing loop inside Thor — an autonomous AI co-founder running a solo operator's business.`,
+    `You are executing one step of "${loop.name}", a standing loop inside Morpheus — an autonomous AI co-founder running a solo operator's business.`,
     `Loop objective: ${loop.objective}`,
     `Current step: ${step.name} — ${step.instruction}`,
     "",
@@ -425,7 +425,9 @@ export async function advance(runId: string): Promise<LoopRun> {
       }
 
       const parsed = parseJson<unknown>(args.text) ?? {};
-      const outcome = await tool.run(parsed);
+      // Through the authority layer, never straight to `tool.run`. A loop
+      // running past its gate is still not permission to touch the world.
+      const outcome = await runTool(tool, parsed);
 
       const artifact: Artifact = {
         stepId: step.id,
@@ -490,7 +492,7 @@ export async function advance(runId: string): Promise<LoopRun> {
  * work is only useful if you find out it needs you without going to look.
  */
 async function notifyGate(loop: LoopDefinition, run: LoopRun): Promise<void> {
-  const base = process.env.THOR_BASE_URL ?? "http://localhost:3000";
+  const base = process.env.MORPHEUS_BASE_URL ?? "http://localhost:3000";
   const preview = run.artifacts.at(-1)?.text.slice(0, 280) ?? "";
 
   const message = [

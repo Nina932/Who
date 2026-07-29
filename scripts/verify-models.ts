@@ -56,7 +56,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const image = process.env.THOR_MODEL_IMAGE ?? "imagen-4.0-generate-001";
+  const image = process.env.MORPHEUS_MODEL_IMAGE ?? "imagen-4.0-generate-001";
   console.log(`${DIM}\nimage model configured as ${image} (not called — generation costs money)${RESET}`);
 
   console.log(

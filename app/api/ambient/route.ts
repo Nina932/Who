@@ -47,7 +47,7 @@ export async function GET() {
       temperature: 0,
       conditions: "",
       live: false,
-      reason: "Set THOR_LAT and THOR_LON to show local weather.",
+      reason: "Set MORPHEUS_LAT and MORPHEUS_LON to show local weather.",
     });
   }
 

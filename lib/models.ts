@@ -18,7 +18,7 @@
 
 export type ModelRole = "quick" | "hard" | "judgment" | "vision" | "extract";
 
-export type Provider = "google" | "anthropic";
+export type Provider = "google" | "anthropic" | "groq";
 
 export interface ModelSpec {
   provider: Provider;
@@ -28,36 +28,128 @@ export interface ModelSpec {
   maxTokens: number;
 }
 
+/**
+ * Candidates per role, in preference order.
+ *
+ * Groq is first for `quick` because that role is latency-bound — a voice turn
+ * that arrives half a second late is a worse answer than a slightly duller one
+ * that arrives immediately. Groq is *last* for `hard`, present only so the
+ * role still works when it is the only key configured.
+ *
+ * `judgment` has exactly one candidate, and that is the point. See below.
+ */
+const CANDIDATES: Record<ModelRole, ModelSpec[]> = {
+  quick: [
+    {
+      provider: "groq",
+      model: process.env.MORPHEUS_MODEL_QUICK_GROQ ?? "openai/gpt-oss-120b",
+      label: "GPT-OSS 120B (Groq)",
+      maxTokens: 700,
+    },
+    {
+      provider: "google",
+      model: process.env.MORPHEUS_MODEL_QUICK ?? "gemini-2.5-flash",
+      label: "Gemini Flash",
+      maxTokens: 700,
+    },
+  ],
+  hard: [
+    {
+      provider: "google",
+      model: process.env.MORPHEUS_MODEL_HARD ?? "gemini-2.5-pro",
+      label: "Gemini Pro",
+      maxTokens: 1600,
+    },
+    {
+      provider: "groq",
+      model: process.env.MORPHEUS_MODEL_HARD_GROQ ?? "openai/gpt-oss-120b",
+      label: "GPT-OSS 120B (Groq)",
+      maxTokens: 1600,
+    },
+  ],
+  /**
+   * One candidate, deliberately.
+   *
+   * `judgment` is the role reached when a turn is consequential — pricing,
+   * contracts, firing someone, spending money. If a frontier key is missing,
+   * this role must report that it is unavailable rather than quietly answering
+   * from the fast tier. A silent downgrade on exactly the questions where
+   * being fast and wrong is most expensive is the single worst thing a router
+   * can do, and it is invisible: the answer still arrives, still fluent.
+   */
+  judgment: [
+    {
+      provider: "anthropic",
+      model: process.env.MORPHEUS_MODEL_JUDGMENT ?? "claude-opus-4-5",
+      label: "Claude Opus",
+      maxTokens: 1600,
+    },
+  ],
+  vision: [
+    {
+      provider: "anthropic",
+      model: process.env.MORPHEUS_MODEL_VISION ?? "claude-sonnet-4-5",
+      label: "Claude Sonnet",
+      maxTokens: 1600,
+    },
+  ],
+  extract: [
+    {
+      provider: "groq",
+      model: process.env.MORPHEUS_MODEL_EXTRACT_GROQ ?? "openai/gpt-oss-120b",
+      label: "GPT-OSS 120B (Groq)",
+      maxTokens: 600,
+    },
+    {
+      provider: "anthropic",
+      model: process.env.MORPHEUS_MODEL_EXTRACT ?? "claude-haiku-4-5-20251001",
+      label: "Claude Haiku",
+      maxTokens: 600,
+    },
+  ],
+};
+
+/** Roles that must never fall back to a cheaper tier. */
+export const NO_DOWNGRADE: ModelRole[] = ["judgment"];
+
+/**
+ * The model that will actually serve a role, given the keys present.
+ *
+ * Returns null when no candidate has a key — which for `judgment` is the
+ * correct and important outcome. Callers surface that as "unavailable", never
+ * as an answer from somewhere else.
+ */
+export function specFor(role: ModelRole): ModelSpec | null {
+  return CANDIDATES[role].find((spec) => Boolean(keyFor(spec.provider))) ?? null;
+}
+
+/** Every candidate for a role, so the UI can show what it would fall back to. */
+export function candidatesFor(role: ModelRole): ModelSpec[] {
+  return CANDIDATES[role];
+}
+
+/**
+ * The stack as currently resolved.
+ *
+ * A getter per role rather than a frozen object: keys can appear between a
+ * build and a request, and an earlier version of this file was inlined at
+ * build time and served whatever the environment held during `npm run build`.
+ */
 export const STACK: Record<ModelRole, ModelSpec> = {
-  quick: {
-    provider: "google",
-    model: process.env.THOR_MODEL_QUICK ?? "gemini-2.5-flash",
-    label: "Gemini Flash",
-    maxTokens: 700,
+  get quick() {
+    return specFor("quick") ?? CANDIDATES.quick[0];
   },
-  hard: {
-    provider: "google",
-    model: process.env.THOR_MODEL_HARD ?? "gemini-2.5-pro",
-    label: "Gemini Pro",
-    maxTokens: 1600,
+  get hard() {
+    return specFor("hard") ?? CANDIDATES.hard[0];
   },
-  judgment: {
-    provider: "anthropic",
-    model: process.env.THOR_MODEL_JUDGMENT ?? "claude-opus-4-5",
-    label: "Claude Opus",
-    maxTokens: 1600,
+  get judgment() {
+    return CANDIDATES.judgment[0];
   },
-  vision: {
-    provider: "anthropic",
-    model: process.env.THOR_MODEL_VISION ?? "claude-sonnet-4-5",
-    label: "Claude Sonnet",
-    maxTokens: 1600,
+  get vision() {
+    return CANDIDATES.vision[0];
   },
-  extract: {
-    provider: "anthropic",
-    model: process.env.THOR_MODEL_EXTRACT ?? "claude-haiku-4-5-20251001",
-    label: "Claude Haiku",
-    maxTokens: 600,
+  get extract() {
+    return specFor("extract") ?? CANDIDATES.extract[0];
   },
 };
 
@@ -144,10 +236,21 @@ export interface CallResult {
 }
 
 const ANTHROPIC_BASE = process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
+const GROQ_BASE = process.env.GROQ_BASE_URL ?? "https://api.groq.com";
 const GOOGLE_BASE =
   process.env.GOOGLE_API_BASE_URL ?? "https://generativelanguage.googleapis.com";
 
+/** The env var a provider needs, for error messages that tell you what to do. */
+export function keyNameFor(provider: Provider): string {
+  return provider === "groq"
+    ? "GROQ_API_KEY"
+    : provider === "anthropic"
+      ? "ANTHROPIC_API_KEY"
+      : "GOOGLE_API_KEY";
+}
+
 export function keyFor(provider: Provider): string | undefined {
+  if (provider === "groq") return process.env.GROQ_API_KEY;
   return provider === "anthropic"
     ? process.env.ANTHROPIC_API_KEY
     : (process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY);
@@ -183,6 +286,43 @@ async function callAnthropic(spec: ModelSpec, options: CallOptions): Promise<str
       .join("")
       .trim() ?? ""
   );
+}
+
+/**
+ * Groq speaks the OpenAI chat-completions shape, so one small adapter covers
+ * every model it hosts. The system prompt becomes a leading `system` message
+ * rather than a separate field, which is the only real difference from here.
+ */
+function groqBody(spec: ModelSpec, options: CallOptions) {
+  return JSON.stringify({
+    model: spec.model,
+    max_tokens: options.maxTokens ?? spec.maxTokens,
+    messages: [
+      ...(options.system ? [{ role: "system", content: options.system }] : []),
+      ...options.messages,
+    ],
+    ...(options.json ? { response_format: { type: "json_object" } } : {}),
+  });
+}
+
+async function callGroq(spec: ModelSpec, options: CallOptions): Promise<string> {
+  const response = await fetch(`${GROQ_BASE}/openai/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${keyFor("groq") as string}`,
+    },
+    body: groqBody(spec, options),
+  });
+
+  if (!response.ok) {
+    throw new Error(`groq ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
 async function callGoogle(spec: ModelSpec, options: CallOptions): Promise<string> {
@@ -233,14 +373,21 @@ export async function callRole(
   role: ModelRole,
   options: CallOptions,
 ): Promise<CallResult> {
-  const spec = STACK[role];
+  // Resolved per call rather than read from a frozen table, so a key added
+  // after start-up takes effect, and so `judgment` can refuse rather than
+  // silently answer from whatever else happens to be configured.
+  const resolved = specFor(role);
+  const spec = resolved ?? STACK[role];
 
-  if (!keyFor(spec.provider)) {
+  if (!resolved) {
+    const wanted = [...new Set(candidatesFor(role).map((s) => keyNameFor(s.provider)))];
     return {
       text: "",
       spec,
       live: false,
-      error: `No ${spec.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "GOOGLE_API_KEY"} configured`,
+      error: NO_DOWNGRADE.includes(role)
+        ? `No ${wanted.join(" or ")} configured. This is a consequential-judgment call and will not be answered by a cheaper model — a fast wrong answer here is worse than none.`
+        : `No ${wanted.join(" or ")} configured`,
     };
   }
 
@@ -248,7 +395,9 @@ export async function callRole(
     const text =
       spec.provider === "anthropic"
         ? await callAnthropic(spec, options)
-        : await callGoogle(spec, options);
+        : spec.provider === "groq"
+          ? await callGroq(spec, options)
+          : await callGoogle(spec, options);
     return { text, spec, live: true };
   } catch (error) {
     console.error(`models: ${role} failed`, error);
@@ -262,12 +411,22 @@ export async function callRole(
 }
 
 /** Which parts of the stack are actually reachable right now. */
-export function stackStatus(): Array<{ role: ModelRole; spec: ModelSpec; ready: boolean }> {
-  return (Object.keys(STACK) as ModelRole[]).map((role) => ({
-    role,
-    spec: STACK[role],
-    ready: Boolean(keyFor(STACK[role].provider)),
-  }));
+export function stackStatus(): Array<{
+  role: ModelRole;
+  spec: ModelSpec;
+  ready: boolean;
+  /** True when this role refuses to fall back rather than downgrading. */
+  protected: boolean;
+}> {
+  return (Object.keys(CANDIDATES) as ModelRole[]).map((role) => {
+    const resolved = specFor(role);
+    return {
+      role,
+      spec: resolved ?? CANDIDATES[role][0],
+      ready: resolved !== null,
+      protected: NO_DOWNGRADE.includes(role),
+    };
+  });
 }
 
 /** Models sometimes fence JSON despite being asked not to. */
@@ -295,7 +454,7 @@ export function parseJson<T>(text: string): T | null {
 /**
  * Stream a role, delivering text deltas as they arrive.
  *
- * This exists for one reason: Thor is voice-first. Waiting for a full
+ * This exists for one reason: Morpheus is voice-first. Waiting for a full
  * completion before speaking adds seconds of silence to every turn, and the
  * whole point of the rebuilt voice system is that you are not sitting there
  * waiting for it. With deltas, the first sentence can be spoken while the rest
@@ -308,19 +467,43 @@ export async function streamRole(
   options: CallOptions,
   onDelta: (delta: string) => void,
 ): Promise<CallResult> {
-  const spec = STACK[role];
+  const resolved = specFor(role);
+  const spec = resolved ?? STACK[role];
 
-  if (!keyFor(spec.provider)) {
+  if (!resolved) {
+    const wanted = [...new Set(candidatesFor(role).map((s) => keyNameFor(s.provider)))];
     return {
       text: "",
       spec,
       live: false,
-      error: `No ${spec.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "GOOGLE_API_KEY"} configured`,
+      error: NO_DOWNGRADE.includes(role)
+        ? `No ${wanted.join(" or ")} configured. Consequential judgment is never downgraded.`
+        : `No ${wanted.join(" or ")} configured`,
     };
   }
 
   const request: { url: string; headers: Record<string, string>; body: string } =
-    spec.provider === "anthropic"
+    spec.provider === "groq"
+      ? {
+          // OpenAI-compatible SSE. Groq serves `quick`, which is the voice
+          // path — so this branch existing is the difference between speaking
+          // as the words arrive and a second of silence before every reply.
+          url: `${GROQ_BASE}/openai/v1/chat/completions`,
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${keyFor("groq") as string}`,
+          },
+          body: JSON.stringify({
+            model: spec.model,
+            max_tokens: options.maxTokens ?? spec.maxTokens,
+            messages: [
+              ...(options.system ? [{ role: "system", content: options.system }] : []),
+              ...options.messages,
+            ],
+            stream: true,
+          }),
+        }
+      : spec.provider === "anthropic"
       ? {
           url: `${ANTHROPIC_BASE}/v1/messages`,
           headers: {
@@ -390,14 +573,17 @@ export async function streamRole(
             type?: string;
             delta?: { type?: string; text?: string };
             candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+            choices?: Array<{ delta?: { content?: string } }>;
           };
 
           const delta =
-            spec.provider === "anthropic"
-              ? event.type === "content_block_delta" && event.delta?.type === "text_delta"
-                ? (event.delta.text ?? "")
-                : ""
-              : (event.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "");
+            spec.provider === "groq"
+              ? (event.choices?.[0]?.delta?.content ?? "")
+              : spec.provider === "anthropic"
+                ? event.type === "content_block_delta" && event.delta?.type === "text_delta"
+                  ? (event.delta.text ?? "")
+                  : ""
+                : (event.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "");
 
           if (delta) {
             text += delta;
@@ -440,7 +626,7 @@ export async function generateImage(
   const key = keyFor("google");
   if (!key) return { ok: false, error: "No GOOGLE_API_KEY configured" };
 
-  const model = process.env.THOR_MODEL_IMAGE ?? "imagen-4.0-generate-001";
+  const model = process.env.MORPHEUS_MODEL_IMAGE ?? "imagen-4.0-generate-001";
 
   try {
     const response = await fetch(`${GOOGLE_BASE}/v1beta/models/${model}:predict`, {
@@ -448,7 +634,7 @@ export async function generateImage(
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         instances: [{ prompt }],
-        parameters: { sampleCount: 1, aspectRatio: process.env.THOR_IMAGE_ASPECT ?? "1:1" },
+        parameters: { sampleCount: 1, aspectRatio: process.env.MORPHEUS_IMAGE_ASPECT ?? "1:1" },
       }),
     });
 

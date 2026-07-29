@@ -5,7 +5,7 @@ import { exchangeCode, readState } from "@/lib/connectors";
  * The OAuth redirect target.
  *
  * Google sends the operator back here with a code. The state carries which
- * connector was being authorised — a callback whose state does not name a
+ * connector was being aumorpheusised — a callback whose state does not name a
  * known connector is rejected rather than guessed at.
  */
 

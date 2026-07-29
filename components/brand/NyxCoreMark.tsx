@@ -8,7 +8,7 @@
  * rest of the cockpit — none of which a PNG does.
  *
  * The geometry is a happy accident worth keeping: a lit core with twelve nodes
- * ringed around it, joined by struts, is the same shape as Thor's agent
+ * ringed around it, joined by struts, is the same shape as Morpheus's agent
  * constellation. The logo and the product's main screen are the same idea at
  * two scales, so they are built from one set of tokens.
  */

@@ -71,7 +71,7 @@ export const NEBULA_FRAG = /* glsl */ `
     vec3 col = mix(deep, teal, smoothstep(0.34, 0.78, n1));
     col = mix(col, violet, smoothstep(0.48, 0.92, n2) * 0.55);
 
-    // Hot filaments where the field peaks, lifted further when Thor speaks.
+    // Hot filaments where the field peaks, lifted further when Morpheus speaks.
     col += pow(max(n1 - 0.62, 0.0), 2.0) * vec3(0.22, 0.62, 0.78) * (1.0 + uEnergy);
 
     // Sink the poles so the horizon reads as a volume rather than a box.

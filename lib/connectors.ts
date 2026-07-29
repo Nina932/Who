@@ -3,7 +3,7 @@
  *
  * The largest gap between this and the real Apex was that the integrations —
  * Drive, Calendar, Email — were drawn and inert. This is the actual wiring:
- * a real Google OAuth authorisation-code flow with refresh, tokens persisted
+ * a real Google OAuth aumorpheusisation-code flow with refresh, tokens persisted
  * through the same store as everything else, and real API calls on top.
  *
  * It needs credentials to do anything, and it says so rather than pretending.
@@ -36,7 +36,7 @@ export interface ConnectorSpec {
   ownerAgentId: string;
   scopes: string[];
   description: string;
-  /** True when the connector can change something outside Thor. */
+  /** True when the connector can change something outside Morpheus. */
   writes: boolean;
 }
 
@@ -81,7 +81,7 @@ export const CONNECTORS: ConnectorSpec[] = [
       "https://www.googleapis.com/auth/presentations",
       "https://www.googleapis.com/auth/drive.file",
     ],
-    description: "Turn an approved outline into a deck. drive.file scope only touches what Thor creates.",
+    description: "Turn an approved outline into a deck. drive.file scope only touches what Morpheus creates.",
     writes: true,
   },
   {
@@ -101,7 +101,7 @@ export const CONNECTORS: ConnectorSpec[] = [
     name: "Chat",
     provider: "slack",
     ownerAgentId: "chief-of-staff",
-    // chat:write only — Thor speaks, it does not read your DMs.
+    // chat:write only — Morpheus speaks, it does not read your DMs.
     scopes: ["chat:write", "channels:read"],
     description:
       "Tells you in Slack the moment a loop is holding at its gate. Post-only — no message history is read.",
@@ -161,14 +161,14 @@ function providerConfig(provider: OAuthProvider): ProviderConfig {
       }
     : provider === "linkedin"
       ? {
-          authUrl: "https://www.linkedin.com/oauth/v2/authorization",
+          authUrl: "https://www.linkedin.com/oauth/v2/aumorpheusization",
           tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
           clientId: process.env.LINKEDIN_CLIENT_ID,
           clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
           extraAuthParams: {},
         }
       : {
-          authUrl: "https://slack.com/oauth/v2/authorize",
+          authUrl: "https://slack.com/oauth/v2/aumorpheusize",
           tokenUrl: "https://slack.com/api/oauth.v2.access",
           clientId: process.env.SLACK_CLIENT_ID,
           clientSecret: process.env.SLACK_CLIENT_SECRET,
@@ -189,11 +189,11 @@ export function oauthConfigured(): boolean {
 function redirectUri(): string {
   return (
     process.env.GOOGLE_OAUTH_REDIRECT_URI ??
-    `${process.env.THOR_BASE_URL ?? "http://localhost:3000"}/api/connectors/callback`
+    `${process.env.MORPHEUS_BASE_URL ?? "http://localhost:3000"}/api/connectors/callback`
   );
 }
 
-// ── Authorisation ────────────────────────────────────────────────────────
+// ── Aumorpheusisation ────────────────────────────────────────────────────────
 
 /**
  * Build the consent URL.
@@ -201,7 +201,7 @@ function redirectUri(): string {
  * `access_type=offline` + `prompt=consent` because without a refresh token the
  * connection silently dies in an hour, which is worse than not connecting.
  */
-export function authorizeUrl(connectorId: ConnectorId, state: string): string | null {
+export function aumorpheusizeUrl(connectorId: ConnectorId, state: string): string | null {
   const spec = CONNECTORS_BY_ID[connectorId];
   if (!spec || !providerConfigured(spec.provider)) return null;
 
@@ -248,7 +248,7 @@ export async function exchangeCode(
         client_id: config.clientId as string,
         client_secret: config.clientSecret as string,
         redirect_uri: redirectUri(),
-        grant_type: "authorization_code",
+        grant_type: "aumorpheusization_code",
       }),
     });
 
@@ -268,7 +268,7 @@ export async function exchangeCode(
     };
 
     if (spec.provider === "slack" && data.ok === false) {
-      return { ok: false, error: `slack: ${data.error ?? "authorisation refused"}` };
+      return { ok: false, error: `slack: ${data.error ?? "aumorpheusisation refused"}` };
     }
 
     const token = data.access_token ?? data.authed_user?.access_token;
@@ -412,7 +412,7 @@ async function googleFetch<T>(
       ...init,
       headers: {
         ...(init?.headers ?? {}),
-        authorization: `Bearer ${token}`,
+        aumorpheusization: `Bearer ${token}`,
         "content-type": "application/json",
       },
     });
@@ -592,9 +592,9 @@ export async function createSlideDeck(input: {
   const requests: unknown[] = [];
 
   input.slides.forEach((slide, index) => {
-    const slideId = `thor_slide_${index}`;
-    const titleId = `thor_title_${index}`;
-    const bodyId = `thor_body_${index}`;
+    const slideId = `morpheus_slide_${index}`;
+    const titleId = `morpheus_title_${index}`;
+    const bodyId = `morpheus_body_${index}`;
 
     requests.push({
       createSlide: {
@@ -649,7 +649,7 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
   try {
     // The member URN comes from the OIDC userinfo endpoint.
     const who = await fetch("https://api.linkedin.com/v2/userinfo", {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { aumorpheusization: `Bearer ${token}` },
     });
     if (!who.ok) return { ok: false, error: `userinfo ${who.status}` };
     const { sub } = (await who.json()) as { sub: string };
@@ -657,13 +657,13 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
     const response = await fetch("https://api.linkedin.com/rest/posts", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${token}`,
+        aumorpheusization: `Bearer ${token}`,
         "content-type": "application/json",
         "LinkedIn-Version": process.env.LINKEDIN_API_VERSION ?? "202405",
         "X-Restli-Protocol-Version": "2.0.0",
       },
       body: JSON.stringify({
-        author: `urn:li:person:${sub}`,
+        aumorpheus: `urn:li:person:${sub}`,
         commentary: text,
         visibility: "PUBLIC",
         distribution: { feedDistribution: "MAIN_FEED" },
@@ -759,7 +759,7 @@ export async function postToSlack(
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${token}`,
+        aumorpheusization: `Bearer ${token}`,
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({ channel: target, text }),

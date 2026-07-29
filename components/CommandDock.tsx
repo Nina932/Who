@@ -81,7 +81,7 @@ export default function CommandDock({
             if (e.key === "Enter") submit();
           }}
           placeholder={
-            listening ? "Listening — or type instead" : "Talk to Thor, or type here"
+            listening ? "Listening — or type instead" : "Talk to Morpheus, or type here"
           }
           className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[color:var(--color-ink-faint)]"
           style={{ color: "var(--color-ink)" }}

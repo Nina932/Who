@@ -133,7 +133,7 @@ export default function CasesPage() {
               open it
             </button>
             <p className="mt-3 text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
-              It starts at the enquiry stage. Thor takes the first turn.
+              It starts at the enquiry stage. Morpheus takes the first turn.
             </p>
           </form>
         ) : null}

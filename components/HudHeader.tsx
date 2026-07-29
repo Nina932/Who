@@ -54,7 +54,7 @@ function Lamp({ label, on, tone = "alive" }: LampProps) {
 
 export interface HudHeaderProps {
   voiceState: VoiceState;
-  /** True once the operator has granted the mic and Thor is listening. */
+  /** True once the operator has granted the mic and Morpheus is listening. */
   voiceEngaged: boolean;
   /** True when replies are generated locally rather than by a live model. */
   local: boolean;
@@ -182,6 +182,7 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
               ["/cases", "Cases"],
               ["/waiting", "Waiting"],
               ["/week", "The week"],
+              ["/authority", "Authority"],
               ["/loops", "Loops"],
               ["/social", "Social"],
             ].map(([href, label]) => (
@@ -205,7 +206,7 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
 
       {/* Status lamps */}
       <div className="mt-6 flex flex-wrap items-center gap-x-7 gap-y-3">
-        <Lamp label="Thor" on />
+        <Lamp label="Morpheus" on />
         <Lamp label="Local" on={local} tone="signal" />
         <Lamp
           label="Voice"

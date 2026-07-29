@@ -15,19 +15,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PREFERRED_VOICES, deliveryFor } from "./voice";
+
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
 /**
- * How Thor sounds. Tunable without touching the code:
+ * How Morpheus sounds. The profile lives in `lib/voice.ts`; tune it with:
  *
- *   NEXT_PUBLIC_THOR_VOICE_PITCH=0    0 is the deepest the spec allows
- *   NEXT_PUBLIC_THOR_VOICE_RATE=0.78  below ~0.7 diction starts to smear
- *   NEXT_PUBLIC_THOR_VOICE="Microsoft David - English (United States)"
+ *   NEXT_PUBLIC_MORPHEUS_VOICE_PITCH=0    0 is the deepest the spec allows
+ *   NEXT_PUBLIC_MORPHEUS_VOICE_RATE=0.78  below ~0.7 diction starts to smear
+ *   NEXT_PUBLIC_MORPHEUS_VOICE="Microsoft David - English (United States)"
  */
-const VOICE = {
-  pitch: Number(process.env.NEXT_PUBLIC_THOR_VOICE_PITCH ?? 0),
-  rate: Number(process.env.NEXT_PUBLIC_THOR_VOICE_RATE ?? 0.78),
-};
+const VOICE = deliveryFor("none");
 
 // The Web Speech API is still vendor-prefixed and unversioned in lib.dom, so
 // we describe only the surface we touch.
@@ -168,14 +167,15 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
 
   // ── Voice character ─────────────────────────────────────────────────────
   //
-  // Aiming for the Transformers register: deep, slow, mechanical. What the
-  // browser gives us is pitch, rate and voice choice — real metallic timbre
-  // needs ring modulation and distortion, and SpeechSynthesis output cannot be
-  // routed into a Web Audio graph, so that is not reachable from here. See
-  // docs/ENGINE.md for the path that is.
+  // An original register rather than an impersonation — deep, deliberate,
+  // faintly metallic, calm rather than menacing. See `lib/voice.ts` for the
+  // full profile and why it is described rather than copied.
   //
-  // Within those limits: the deepest installed voice, pitch at the floor, and
-  // a rate slow enough to land like a pronouncement rather than a readout.
+  // The browser gives pitch, rate and voice choice. Real metallic timbre needs
+  // ring modulation, and SpeechSynthesis output cannot be routed into a Web
+  // Audio graph, so it is not reachable from here. Within those limits: the
+  // deepest installed voice, pitch at the floor, and a rate slow enough to
+  // land like a pronouncement rather than a readout.
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   useEffect(() => {
@@ -185,7 +185,7 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length === 0) return;
 
-      const named = process.env.NEXT_PUBLIC_THOR_VOICE;
+      const named = process.env.NEXT_PUBLIC_MORPHEUS_VOICE;
       if (named) {
         const exact = voices.find((v) => v.name === named);
         if (exact) {
@@ -194,9 +194,7 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
         }
       }
 
-      // Deep male voices, in rough order of how low they actually sit.
-      // "David" and "Mark" ship with Windows; "Daniel" and "Alex" with macOS.
-      const preferred = ["david", "mark", "daniel", "alex", "george", "rishi"];
+      const preferred = PREFERRED_VOICES;
       const english = voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
 
       voiceRef.current =

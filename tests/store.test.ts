@@ -14,8 +14,8 @@ let tmp: string;
 let store: typeof import("../lib/store");
 
 before(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "thor-store-"));
-  process.env.THOR_DATA_DIR = tmp;
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "morpheus-store-"));
+  process.env.MORPHEUS_DATA_DIR = tmp;
   store = await import("../lib/store");
 });
 

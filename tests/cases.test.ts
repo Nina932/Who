@@ -86,14 +86,14 @@ describe("the workflow", () => {
     }
   });
 
-  it("never grants execute authority to anything irreversible with money", () => {
+  it("never grants execute aumorpheusity to anything irreversible with money", () => {
     // Drafting an invoice is preparation. Sending one is a commercial act.
     for (const stage of LEAD_TO_CASH.stages) {
       for (const spec of [stage.action, stage.waiting?.escalation]) {
         if (!spec) continue;
         if (stage.loop !== "cash") continue;
         assert.notEqual(
-          spec.authority,
+          spec.aumorpheusity,
           "execute",
           `${stage.id} would act on money unattended`,
         );
@@ -167,12 +167,12 @@ describe("whose turn it is", () => {
     assert.match(view.action?.why ?? "", /Silent for 9 days/);
   });
 
-  it("takes the turn off Thor too when the system stalls", () => {
+  it("takes the turn off Morpheus too when the system stalls", () => {
     const record = build([ev("opened", 4)]);
     const view = project(record, NOW);
     assert.equal(view.stage.id, "inbound");
     assert.equal(view.turn, "mine");
-    assert.match(view.action?.why ?? "", /Thor has held this/);
+    assert.match(view.action?.why ?? "", /Morpheus has held this/);
   });
 
   it("blocks override the stage, and name what is blocking", () => {

@@ -1,4 +1,4 @@
-# The Thor engine
+# The Morpheus engine
 
 What actually runs, versus what is drawn. Every claim on this page was
 exercised end to end — the transcripts are in the PR.
@@ -43,7 +43,7 @@ Escalation is one-way and keyword-explicit. The cost of being fast and wrong on
 a pricing decision is asymmetric, so those never ride Flash.
 
 Missing keys never throw — `callRole` returns `live: false` with the reason, and
-`GET /api/thor` reports which parts of the stack are reachable.
+`GET /api/morpheus` reports which parts of the stack are reachable.
 
 ## 2. The Loops Engine
 
@@ -101,7 +101,7 @@ constraints, goals — stays relevant even when no words match.
 It is a flat JSON file on purpose:
 
 ```bash
-$ cat .thor/memory.json
+$ cat .morpheus/memory.json
 [ { "text": "Never publish to LinkedIn without explicit approval.",
     "kind": "constraint", "confidence": 1, "recalled": 1 }, … ]
 ```
@@ -140,7 +140,7 @@ action.
 ## 5. Streaming and the voice path
 
 `streamRole` in [`lib/models.ts`](../lib/models.ts) streams both providers
-(Anthropic SSE, Google `streamGenerateContent?alt=sse`). `/api/thor` returns a
+(Anthropic SSE, Google `streamGenerateContent?alt=sse`). `/api/morpheus` returns a
 Server-Sent Event stream:
 
 ```
@@ -154,7 +154,7 @@ event: done    { local, learned }
 operator stops talking, rather than after generation.
 
 The client buffers deltas to **sentence boundaries** and enqueues each finished
-sentence with `speakChunk` — SpeechSynthesis queues natively, so Thor starts
+sentence with `speakChunk` — SpeechSynthesis queues natively, so Morpheus starts
 speaking the first sentence while the third is still being generated.
 Synthesising raw fragments makes the cadence robotic, which is why the boundary
 split matters.
@@ -170,7 +170,7 @@ load:
 
 | Driver | When |
 | --- | --- |
-| `fs` (default) | Flat JSON under `.thor/`, temp-then-rename so a crash cannot leave a partial file. Deliberately readable — a system claiming durable memory should let you audit it with `cat`. |
+| `fs` (default) | Flat JSON under `.morpheus/`, temp-then-rename so a crash cannot leave a partial file. Deliberately readable — a system claiming durable memory should let you audit it with `cat`. |
 | `redis` | Upstash over its REST API — plain `fetch`, no client library, no TCP socket, so it works in any runtime. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. |
 
 The filesystem driver is correct for a long-lived server and **wrong on
@@ -236,14 +236,14 @@ inbound-to-pipeline      next: event-driven
 
 `tick()` advances a loop's next slot **before** starting its run, so a failing
 loop moves to its next slot instead of retrying every tick and becoming a hot
-loop. Two ways to drive it: an in-process timer (`THOR_SCHEDULER=on`) for a
+loop. Two ways to drive it: an in-process timer (`MORPHEUS_SCHEDULER=on`) for a
 long-lived server, or `POST /api/scheduler {"action":"tick"}` for cron on hosts
 where background timers do not survive. Both call the same idempotent `tick()`.
 
 ## 8. Connectors
 
 [`lib/connectors.ts`](../lib/connectors.ts). A real Google OAuth
-authorisation-code flow with refresh, tokens persisted through the same store,
+aumorpheusisation-code flow with refresh, tokens persisted through the same store,
 and real API calls on top: Drive file listing, Calendar read and event
 creation, Gmail read and draft creation.
 
@@ -253,10 +253,10 @@ Scopes are requested narrowly on purpose:
 | --- | --- | --- | --- |
 | Drive | Google | `drive.readonly` | An agent that can delete your files is a different risk |
 | Calendar | Google | `calendar.events` | Needed to place approved work |
-| Email | Google | `gmail.readonly` + `gmail.compose` | **compose, not send** — Thor drafts, a human presses send |
-| Slides | Google | `presentations` + `drive.file` | `drive.file` only touches files Thor created |
+| Email | Google | `gmail.readonly` + `gmail.compose` | **compose, not send** — Morpheus drafts, a human presses send |
+| Slides | Google | `presentations` + `drive.file` | `drive.file` only touches files Morpheus created |
 | Sheets | Google | `spreadsheets` + `drive.file` | Appends run outcomes to a log you can pivot |
-| Chat | Slack | `chat:write`, `channels:read` | **Post-only.** Thor speaks; it never reads your messages |
+| Chat | Slack | `chat:write`, `channels:read` | **Post-only.** Morpheus speaks; it never reads your messages |
 | LinkedIn | LinkedIn | `w_member_social` | Publishing — **wired into no loop by default** |
 
 **"Chat" was ambiguous** in the source roster — Slack, Google Chat and WhatsApp
@@ -337,7 +337,7 @@ a model-invented date in a log is worse than no date at all.
 ### Gate notifications
 
 The reason a Chat connector earns its place. When a run enters `awaiting-go`,
-Thor posts to Slack with the loop name, the last artefact, and a link straight
+Morpheus posts to Slack with the loop name, the last artefact, and a link straight
 to `/loops`. Semi-autonomous work is only useful if you find out it needs you
 without going to look.
 
@@ -353,7 +353,7 @@ valid, and the artefact records exactly what went wrong.
 [`lib/guard.ts`](../lib/guard.ts). The mutating endpoints approve autonomous
 work, delete memory and spend money on model calls, and had no check at all.
 Two layers: cross-origin writes are refused outright, and when
-`THOR_API_SECRET` is set every mutating call must present it. Reads stay open so
+`MORPHEUS_API_SECRET` is set every mutating call must present it. Reads stay open so
 the cockpit renders.
 
 ```
@@ -418,8 +418,8 @@ Four defects found by grilling the build, each verified fixed:
 
 | | |
 | --- | --- |
-| `POST /api/thor` | attendance + routing + memory + style, then learn |
-| `GET /api/thor` | which parts of the stack are reachable |
+| `POST /api/morpheus` | attendance + routing + memory + style, then learn |
+| `GET /api/morpheus` | which parts of the stack are reachable |
 | `GET/POST /api/loops` | list; `start` · `advance` · `approve` · `reject` · `observe` |
 | `GET/POST/DELETE /api/memory` | read, add, forget |
 | `GET/POST /api/style` | profile; record an edit; `more-my-style` |
@@ -431,7 +431,7 @@ ANTHROPIC_API_KEY=...   # judgment (Opus), vision (Sonnet), extract (Haiku)
 GOOGLE_API_KEY=...      # quick (Flash), hard (Pro)
 ```
 
-Each role's model is individually overridable (`THOR_MODEL_QUICK`, etc.), and
+Each role's model is individually overridable (`MORPHEUS_MODEL_QUICK`, etc.), and
 both provider base URLs are overridable — which is how the end-to-end run above
 was exercised against a local stand-in.
 

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { CAPABILITY_BY_ID } from "../lib/authority";
 
 /**
  * Tool argument validation.
@@ -18,8 +19,8 @@ let tools: typeof import("../lib/tools");
 let loops: typeof import("../lib/loops");
 
 before(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "thor-tools-"));
-  process.env.THOR_DATA_DIR = tmp;
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "morpheus-tools-"));
+  process.env.MORPHEUS_DATA_DIR = tmp;
   delete process.env.GOOGLE_OAUTH_CLIENT_ID;
   delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   tools = await import("../lib/tools");
@@ -133,5 +134,44 @@ describe("tool wiring", () => {
     const instruction = tools.toolInstruction(tools.TOOLS["calendar.schedule"]);
     assert.match(instruction, /\{\}/);
     assert.match(instruction, /Invent nothing/);
+  });
+});
+
+describe("tools go through the authority layer", () => {
+  it("every tool declares a registered capability", () => {
+    // A tool with no declared capability would run unchecked.
+    for (const tool of Object.values(tools.TOOLS) as Array<{ name: string; capabilityId: string }>) {
+      assert.ok(tool.capabilityId, `${tool.name} declares no capability`);
+      assert.ok(
+        CAPABILITY_BY_ID[tool.capabilityId],
+        `${tool.name} declares "${tool.capabilityId}", which is not registered`,
+      );
+    }
+  });
+
+  it("no tool claims a level-4 capability", () => {
+    // Nothing a loop can reach may send, publish, deploy, delete or spend.
+    // Those exist as capabilities so they can be approved deliberately, not so
+    // an autonomous workflow can reach them past its gate.
+    for (const tool of Object.values(tools.TOOLS) as Array<{ name: string; capabilityId: string }>) {
+      assert.notEqual(
+        CAPABILITY_BY_ID[tool.capabilityId].level,
+        4,
+        `${tool.name} reaches a level-4 capability`,
+      );
+    }
+  });
+
+  it("keeps drafting and sending on different capabilities", () => {
+    assert.equal(tools.TOOLS["gmail.draft"].capabilityId, "mail.draft");
+    assert.notEqual(tools.TOOLS["gmail.draft"].capabilityId, "mail.send");
+  });
+
+  it("refuses rather than throwing when the policy says no", async () => {
+    // A refusal is a result the loop records, not an exception that fails the
+    // run — the artefact should say what was refused and why.
+    const result = await tools.runTool(tools.TOOLS["gmail.draft"], { to: "a@b.c", subject: "x", body: "y" });
+    assert.equal(typeof result.ok, "boolean");
+    assert.ok(result.summary.length > 0);
   });
 });
