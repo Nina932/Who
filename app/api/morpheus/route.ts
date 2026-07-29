@@ -3,7 +3,18 @@ import { guardMutation } from "@/lib/guard";
 import { AGENTS_BY_ID, FAMILY_LABEL } from "@/lib/agents";
 import { learnFrom, recall, renderForPrompt as renderMemory } from "@/lib/memory";
 import { routeTurn, stackStatus, streamRole } from "@/lib/models";
-import { decideAttendance, draftReply, type Turn } from "@/lib/orchestrator";
+import {
+  decideAttendance,
+  draftReply,
+  requestsOrchestration,
+  type Turn,
+} from "@/lib/orchestrator";
+import { orchestrationReply } from "@/lib/orchestration-response";
+import {
+  localContextReply,
+  renderLocalContext,
+  requestsLocalContext,
+} from "@/lib/ambient";
 import { getProfile, renderForPrompt as renderStyle } from "@/lib/style";
 import { allProducts } from "@/lib/assistant-store";
 import {
@@ -106,6 +117,8 @@ export async function POST(request: Request) {
   const needsSystemStatus = requestsSystemStatus(utterance);
   const needsAudioUnderstanding = requestsAudioUnderstanding(utterance);
   const needsCalendarAgenda = requestsCalendarAgenda(utterance, history);
+  const needsLocalContext = requestsLocalContext(utterance);
+  const orchestrationRequested = requestsOrchestration(utterance);
   const requestedConnectorId = requestedConnection(utterance, history);
   const directNewsRequest =
     /\b(news|headlines?|latest|newest|current events?|what(?:'s| is) happening)\b/i.test(
@@ -127,7 +140,14 @@ export async function POST(request: Request) {
       ? body.forceAgentId
       : null;
 
-  const attendance = forced
+  const measuredDirectReply =
+    needsSystemStatus ||
+    needsAudioUnderstanding ||
+    needsCalendarAgenda ||
+    needsLocalContext;
+  const attendance = measuredDirectReply
+    ? { primaryId: null, supportingIds: [], triggers: [], confidence: 1 }
+    : forced
     ? { primaryId: forced, supportingIds: [], triggers: [], confidence: 1 }
     : decideAttendance(utterance);
 
@@ -135,6 +155,9 @@ export async function POST(request: Request) {
   const route = routeTurn(utterance, body.hasAttachment === true);
 
   const agent = attendance.primaryId ? AGENTS_BY_ID[attendance.primaryId] : null;
+  const supportingAgents = attendance.supportingIds
+    .map((id) => AGENTS_BY_ID[id])
+    .filter(Boolean);
 
   // ── Context ────────────────────────────────────────────────────────────
   const [
@@ -183,6 +206,18 @@ export async function POST(request: Request) {
     "- Answer as Morpheus. Specialist routing is invisible implementation detail unless the operator explicitly asks who handled a task.",
     "- This is spoken aloud. Two or three sentences unless the operator asked for depth.",
     "- Lead with the answer or the decision.",
+    orchestrationRequested
+      ? "- ORCHESTRATION MODE IS EXPLICITLY REQUESTED. Take command rather than merely advising: state the objective, assign the relevant internal capabilities, sequence the next actions, name dependencies, and separate what can be done now from what needs operator input or approval. Close with the immediate next move and its owner. Never promise an invisible handoff or future update."
+      : "",
+    orchestrationRequested
+      ? "- Orchestration must remain grounded. Never invent capacity percentages, budgets, launch dates, deadlines, staff availability, or completed scheduling. If a required value is absent from the supplied context, label it unset and ask for only that decision. Assign proposed owners, but do not claim a kickoff was scheduled, work started, or a handoff occurred unless this request produced an action receipt."
+      : "",
+    orchestrationRequested && supportingAgents.length
+      ? `- Internal capabilities in the room: ${[agent, ...supportingAgents]
+          .filter(Boolean)
+          .map((capability) => `${capability?.name}: ${capability?.charter}`)
+          .join(" | ")}`
+      : "",
     "- Sound like a sharp, familiar co-founder, not a corporate assistant, department head, or official briefing.",
     "- Use contractions and natural spoken phrasing. Never recite your title, charter, routing logic, or the operator's words back to them.",
     "- Understand jokes, teasing, irony, exaggeration, and sarcasm from context. If the operator is joking, meet them there instead of answering the joke literally.",
@@ -218,6 +253,7 @@ export async function POST(request: Request) {
   const newsBlock = liveNews ? renderLiveNews(liveNews) : "";
   const fullSystem = [
     system,
+    renderLocalContext(),
     newsBlock,
     operatorBlock,
     integrationBlock,
@@ -309,6 +345,13 @@ export async function POST(request: Request) {
         return;
       }
 
+      if (needsLocalContext) {
+        send("delta", { text: localContextReply() });
+        send("done", { local: true, measured: true, learned: [] });
+        controller.close();
+        return;
+      }
+
       if (calendarAgenda) {
         send("delta", { text: calendarAgendaReply(calendarAgenda) });
         send("done", { local: true, measured: true, learned: [] });
@@ -319,6 +362,18 @@ export async function POST(request: Request) {
       if (needsAudioUnderstanding) {
         send("delta", { text: audioUnderstandingReply() });
         send("done", { local: true, measured: true, learned: [] });
+        controller.close();
+        return;
+      }
+
+      if (orchestrationRequested) {
+        send("delta", { text: orchestrationReply(utterance) });
+        send("done", {
+          local: true,
+          orchestrated: true,
+          executed: false,
+          learned: [],
+        });
         controller.close();
         return;
       }

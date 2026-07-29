@@ -148,6 +148,19 @@ export function groundedInOperator(candidate: string, operatorText: string): boo
   return shared / Math.min(proposed.size, 5) >= 0.4;
 }
 
+/**
+ * Old stores predate the explicit `grounded` marker. They may still be used
+ * only when the deterministic grounding gate can reproduce the decision from
+ * their saved operator source. This quarantines historical extractor fiction
+ * without discarding genuinely operator-stated memories.
+ */
+export function trustedForRecall(fact: Fact): boolean {
+  return (
+    fact.grounded === true ||
+    groundedInOperator(fact.text, fact.source)
+  );
+}
+
 /** Cheap near-duplicate check so memory doesn't fill with rephrasings. */
 function similar(a: string, b: string): boolean {
   const norm = (s: string) =>
@@ -173,7 +186,7 @@ function similar(a: string, b: string): boolean {
  * memory retrieval on every turn has to be free.
  */
 export async function recall(utterance: string, limit = 8): Promise<Fact[]> {
-  const facts = await allFacts();
+  const facts = (await allFacts()).filter(trustedForRecall);
   if (facts.length === 0) return [];
 
   const terms = new Set(

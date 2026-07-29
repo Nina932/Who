@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { groundedInOperator } from "../lib/memory";
+import { groundedInOperator, trustedForRecall } from "../lib/memory";
 
 describe("memory grounding", () => {
   it("does not turn a question about the assistant into operator memory", () => {
@@ -19,6 +19,21 @@ describe("memory grounding", () => {
         "Engineering capacity is squeezed with a thin ten percent contingency.",
         "Compare our launch strategy, engineering constraints, and budget risk",
       ),
+      false,
+    );
+  });
+
+  it("quarantines an ungrounded legacy extractor claim during recall", () => {
+    assert.equal(
+      trustedForRecall({
+        id: "old",
+        text: "The budget includes a thin 10% contingency.",
+        kind: "constraint",
+        confidence: 0.97,
+        source: "Compare our launch strategy, engineering constraints, and budget risk",
+        createdAt: 1,
+        recalled: 87,
+      }),
       false,
     );
   });

@@ -2,6 +2,7 @@ import type {
   CalendarEvent,
   CallOutcome,
 } from "./connectors";
+import { timeZone } from "./ambient";
 import type { Turn } from "./orchestrator";
 
 export function requestsCalendarAgenda(
@@ -42,6 +43,7 @@ function eventTime(event: CalendarEvent): string {
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: timeZone(),
   }).format(date);
 }
 

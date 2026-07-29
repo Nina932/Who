@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { decideAttendance, draftReply, scoreAgents } from "../lib/orchestrator";
+import {
+  decideAttendance,
+  draftReply,
+  requestsOrchestration,
+  scoreAgents,
+} from "../lib/orchestrator";
 
 /**
  * Specialist Attendance is the product's headline claim, so its routing gets
@@ -28,6 +33,23 @@ describe("scoreAgents", () => {
 });
 
 describe("decideAttendance", () => {
+  it("puts a lead capability in the room when orchestration is explicitly requested", () => {
+    assert.equal(requestsOrchestration("Morpheus, orchestrate this"), true);
+    const decision = decideAttendance("Morpheus, orchestrate this");
+    assert.equal(decision.primaryId, "chief-of-staff");
+    assert.deepEqual(decision.triggers, ["orchestration requested"]);
+  });
+
+  it("adds coordination to a domain-specific orchestration request", () => {
+    const decision = decideAttendance(
+      "take the lead and orchestrate the engineering launch",
+    );
+    assert.ok(decision.primaryId);
+    if (decision.primaryId !== "chief-of-staff") {
+      assert.ok(decision.supportingIds.includes("chief-of-staff"));
+    }
+  });
+
   it("keeps ordinary conversation with Morpheus instead of inventing a staff handoff", () => {
     const decision = decideAttendance("hello there");
     assert.equal(decision.primaryId, null);

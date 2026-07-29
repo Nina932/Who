@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/audio/speech";
-const DIRECTIONS = "[authoritatively] [calmly]";
+const DIRECTIONS = "[menacing] [deliberately]";
 const MAX_TEXT = 165;
 
 interface SpeechBody {
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 0.94);
+  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 1.02);
   const upstream = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
       input: `${DIRECTIONS} ${text}`,
       response_format: "wav",
       sample_rate: 48_000,
-      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 0.94,
+      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 1.02,
     }),
     cache: "no-store",
   });

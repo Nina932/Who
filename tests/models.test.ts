@@ -49,6 +49,14 @@ describe("routeTurn", () => {
     assert.equal(route.role, "hard");
   });
 
+  it("does not find signing inside design", () => {
+    const route = routeTurn(
+      "orchestrate the feature launch across engineering, design, and marketing",
+    );
+    assert.equal(route.role, "hard");
+    assert.doesNotMatch(route.reason, /sign/);
+  });
+
   it("treats a very long turn as needing reasoning", () => {
     const route = routeTurn("a".repeat(300));
     assert.equal(route.role, "hard");

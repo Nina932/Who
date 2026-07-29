@@ -659,36 +659,61 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
 
           await new Promise<void>((resolve, reject) => {
             const source = context.createBufferSource();
+            const highpass = context.createBiquadFilter();
             const body = context.createBiquadFilter();
             const presence = context.createBiquadFilter();
             const compressor = context.createDynamicsCompressor();
+            const dry = context.createGain();
+            const machine = context.createGain();
+            const modulator = context.createOscillator();
+            const modulationDepth = context.createGain();
             source.buffer = buffer;
+            source.detune.value = -140;
 
-            // Cullen's celebrated performance needed little processing. This
-            // restrained contour adds physical weight without a caricatured
-            // vocoder: a modest chest lift and a slight edge reduction.
+            // A restrained war-machine contour: lower chest weight, controlled
+            // steel in the consonants, and a low-rate amplitude modulation
+            // under a strong dry signal. It stays intelligible rather than
+            // becoming a novelty vocoder.
+            highpass.type = "highpass";
+            highpass.frequency.value = 48;
             body.type = "lowshelf";
-            body.frequency.value = 130;
-            body.gain.value = 3.5;
+            body.frequency.value = 155;
+            body.gain.value = 7;
             presence.type = "peaking";
-            presence.frequency.value = 3_200;
-            presence.Q.value = 0.75;
-            presence.gain.value = -1.5;
-            compressor.threshold.value = -19;
-            compressor.knee.value = 12;
-            compressor.ratio.value = 2.4;
-            compressor.attack.value = 0.008;
-            compressor.release.value = 0.18;
+            presence.frequency.value = 1_850;
+            presence.Q.value = 1.1;
+            presence.gain.value = 2.2;
+            compressor.threshold.value = -22;
+            compressor.knee.value = 9;
+            compressor.ratio.value = 3.4;
+            compressor.attack.value = 0.006;
+            compressor.release.value = 0.22;
+            dry.gain.value = 0.86;
+            machine.gain.value = 0;
+            modulator.type = "sine";
+            modulator.frequency.value = 46;
+            modulationDepth.gain.value = 0.18;
+            modulator.connect(modulationDepth).connect(machine.gain);
 
             source
+              .connect(highpass)
               .connect(body)
               .connect(presence)
-              .connect(compressor)
-              .connect(context.destination);
+              .connect(compressor);
+            compressor.connect(dry).connect(context.destination);
+            compressor.connect(machine).connect(context.destination);
             ttsSourceRef.current = source;
-            source.onended = () => resolve();
+            source.onended = () => {
+              try {
+                modulator.stop();
+              } catch {
+                /* already stopped */
+              }
+              resolve();
+            };
             try {
               setState("speaking");
+              modulator.start();
               source.start();
             } catch (error) {
               reject(error);

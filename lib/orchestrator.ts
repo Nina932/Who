@@ -35,6 +35,12 @@ export interface AttendanceDecision {
   confidence: number;
 }
 
+export function requestsOrchestration(utterance: string): boolean {
+  return /\b(?:orchestrat(?:e|ion|ing)|coordinate|take (?:the )?lead|lead this|run this|manage this|own this end to end|assemble (?:the )?(?:team|specialists)|call in (?:the )?(?:team|specialists))\b/i.test(
+    utterance,
+  );
+}
+
 /**
  * Low-information phrases that must not earn the multi-word bonus.
  *
@@ -106,8 +112,17 @@ export function decideAttendance(utterance: string): AttendanceDecision {
   }
 
   const scores = scoreAgents(utterance);
+  const orchestrationRequested = requestsOrchestration(utterance);
 
   if (scores.size === 0) {
+    if (orchestrationRequested) {
+      return {
+        primaryId: "chief-of-staff",
+        supportingIds: [],
+        triggers: ["orchestration requested"],
+        confidence: 0.95,
+      };
+    }
     // Nothing domain-specific means Morpheus answers directly. Assigning the
     // chief-of-staff seat to every greeting made ordinary conversation look
     // like a department had been summoned and encouraged the model to invent
@@ -126,11 +141,18 @@ export function decideAttendance(utterance: string): AttendanceDecision {
 
   // Supporting agents need to be genuinely close to the leader, otherwise a
   // single stray keyword drags half the roster into every conversation.
-  const supportingIds = ranked
+  let supportingIds = ranked
     .slice(1)
     .filter(([, v]) => v.score >= top.score * 0.55)
     .slice(0, 2)
     .map(([id]) => id);
+  if (
+    orchestrationRequested &&
+    topId !== "chief-of-staff" &&
+    !supportingIds.includes("chief-of-staff")
+  ) {
+    supportingIds = ["chief-of-staff", ...supportingIds].slice(0, 2);
+  }
 
   return {
     primaryId: topId,

@@ -184,8 +184,17 @@ const CONSEQUENTIAL = [
 const HARD = [
   "why", "compare", "trade-off", "tradeoff", "analyse", "analyze", "strategy",
   "plan", "architecture", "design a", "explain how", "figure out", "work out",
-  "options", "approach", "root cause",
+  "options", "approach", "root cause", "orchestrate", "orchestration",
 ];
+
+function containsRoutingTerm(text: string, term: string): boolean {
+  const escaped = term
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "iu").test(
+    text,
+  );
+}
 
 export interface RouteDecision {
   role: ModelRole;
@@ -201,13 +210,15 @@ export interface RouteDecision {
  * fast and wrong on those is asymmetric.
  */
 export function routeTurn(utterance: string, hasAttachment = false): RouteDecision {
-  const text = ` ${utterance.toLowerCase()} `;
+  const text = utterance.toLowerCase();
 
   if (hasAttachment) {
     return { role: "vision", spec: STACK.vision, reason: "Attachment to read" };
   }
 
-  const consequential = CONSEQUENTIAL.find((term) => text.includes(term));
+  const consequential = CONSEQUENTIAL.find((term) =>
+    containsRoutingTerm(text, term),
+  );
   if (consequential) {
     return {
       role: "judgment",
@@ -216,7 +227,7 @@ export function routeTurn(utterance: string, hasAttachment = false): RouteDecisi
     };
   }
 
-  const hard = HARD.find((term) => text.includes(term));
+  const hard = HARD.find((term) => containsRoutingTerm(text, term));
   if (hard || utterance.length > 240) {
     return {
       role: "hard",

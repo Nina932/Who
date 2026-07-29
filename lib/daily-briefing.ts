@@ -1,4 +1,5 @@
 import { allProducts } from "./assistant-store";
+import { timeZone } from "./ambient";
 import {
   listCalendarEvents,
   listRecentMail,
@@ -162,9 +163,10 @@ function calendarLine(
 
   const startsAt = next.start?.dateTime ?? next.start?.date;
   const time = startsAt
-    ? new Intl.DateTimeFormat("en", {
+      ? new Intl.DateTimeFormat("en", {
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: timeZone(),
       }).format(new Date(startsAt))
     : "time not set";
   const remainder = futureEvents.length - 1;
