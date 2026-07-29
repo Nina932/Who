@@ -8,7 +8,7 @@
  * kills playback and hands the floor straight back to the operator.
  */
 
-import type { VoiceState } from "@/lib/useVoice";
+import type { VoicePath, VoiceState } from "@/lib/useVoice";
 
 type Tone = "signal" | "attend" | "muted" | "success" | "danger" | "uncertain";
 
@@ -31,6 +31,8 @@ export interface VoiceStatusProps {
   interim: string;
   /** True only after the browser has delivered a real microphone stream. */
   micLive: boolean;
+  /** Which engine last spoke. Shown only when it is not the intended one. */
+  voicePath: VoicePath;
   onInterrupt: () => void;
 }
 
@@ -38,6 +40,7 @@ export default function VoiceStatus({
   state,
   interim,
   micLive,
+  voicePath,
   onInterrupt,
 }: VoiceStatusProps) {
   const status =
@@ -82,6 +85,17 @@ export default function VoiceStatus({
           {text}
         </span>
       </button>
+
+      {/* A fallback used to be silent, which read as the voice work never
+          having landed. If the local engine is speaking, it says so. */}
+      {voicePath.engine === "browser" ? (
+        <div
+          className="rise-in max-w-[520px] px-4 text-center text-[11px] uppercase tracking-[0.12em]"
+          style={{ color: "#d48cff" }}
+        >
+          Local voice · {voicePath.reason}
+        </div>
+      ) : null}
 
       {/* Partial recognition, shown live so the operator can see it landing. */}
       {interim ? (

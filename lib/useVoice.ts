@@ -34,6 +34,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SILENT, createAnalyser, type Analyser, type VoiceLevels } from "./audio";
+import { buildMechanicalVoice } from "./voice-chain";
 import {
   PREFERRED_VOICES,
   deliveryFor,
@@ -58,6 +59,48 @@ export type OutcomeState = Extract<
   VoiceState,
   "completed" | "failed" | "outcome-uncertain"
 >;
+
+/**
+ * Which engine last spoke, and why it was not the intended one.
+ *
+ * The provider path is what carries the mechanical processing; the browser
+ * path cannot, because `SpeechSynthesis` output cannot be routed into a Web
+ * Audio graph. Falling back is therefore not a cosmetic difference — it is the
+ * signature voice silently becoming the system's default narrator, which is
+ * exactly what happened while Groq was refusing the model terms and looked
+ * from the cockpit like the work had never been done. The reason is carried so
+ * it can be shown rather than guessed at.
+ */
+export type VoicePath =
+  | { engine: "provider" }
+  | { engine: "browser"; reason: string };
+
+const PROVIDER_PATH: VoicePath = { engine: "provider" };
+
+/**
+ * Turn a refused speech request into something worth reading.
+ *
+ * Only two causes are worth naming, because only two are actionable by the
+ * operator: the key is missing, or the Groq account has not accepted the
+ * model's terms. Both are fixed outside this codebase, and neither is
+ * distinguishable from a plain outage without reading the body.
+ */
+async function speechFailureReason(response: Response): Promise<string> {
+  let detail = "";
+  try {
+    const body = (await response.json()) as { error?: unknown; detail?: unknown };
+    detail = [body.error, body.detail].filter((part) => typeof part === "string").join(" ");
+  } catch {
+    /* a non-JSON body tells us nothing beyond the status */
+  }
+
+  if (/model_terms_required|model terms|terms/i.test(detail)) {
+    return "Groq has not accepted the Orpheus model terms.";
+  }
+  if (response.status === 503) return "Speech service is not configured.";
+  if (response.status === 429) return "Speech service rate limit reached.";
+  return `Speech service returned ${response.status}.`;
+}
 
 /**
  * How long the level must stay under the floor before the operator is treated
@@ -118,6 +161,7 @@ export interface UseVoiceOptions {
 export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
   const [state, setState] = useState<VoiceState>("idle");
   const [interim, setInterim] = useState("");
+  const [voicePath, setVoicePath] = useState<VoicePath>(PROVIDER_PATH);
 
   // Three capabilities, tracked apart because they fail apart. Collapsing them
   // into one `supported` flag is what made a browser with no recognition
@@ -603,7 +647,8 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
       else showOutcome("completed");
     };
 
-    const browserFallback = () => {
+    const browserFallback = (reason: string) => {
+      setVoicePath({ engine: "browser", reason });
       if (
         generation !== speechGenerationRef.current ||
         !window.speechSynthesis
@@ -627,7 +672,7 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
       // turns. Long reports remain complete through the local browser voice
       // rather than burning several provider requests or truncating speech.
       if (chunks.length === 0 || chunks.length > 3) {
-        browserFallback();
+        browserFallback("Long answer — spoken by the local voice.");
         return;
       }
 
@@ -650,7 +695,7 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
             body: JSON.stringify({ text: chunk }),
             signal: abort.signal,
           });
-          if (!response.ok) throw new Error(`speech ${response.status}`);
+          if (!response.ok) throw new Error(await speechFailureReason(response));
 
           const buffer = await context.decodeAudioData(
             await response.arrayBuffer(),
@@ -658,68 +703,26 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
           if (generation !== speechGenerationRef.current) return;
 
           await new Promise<void>((resolve, reject) => {
-            const source = context.createBufferSource();
-            const highpass = context.createBiquadFilter();
-            const body = context.createBiquadFilter();
-            const presence = context.createBiquadFilter();
-            const compressor = context.createDynamicsCompressor();
-            const dry = context.createGain();
-            const machine = context.createGain();
-            const modulator = context.createOscillator();
-            const modulationDepth = context.createGain();
-            source.buffer = buffer;
-            source.detune.value = -140;
-
-            // A restrained war-machine contour: lower chest weight, controlled
-            // steel in the consonants, and a low-rate amplitude modulation
-            // under a strong dry signal. It stays intelligible rather than
-            // becoming a novelty vocoder.
-            highpass.type = "highpass";
-            highpass.frequency.value = 48;
-            body.type = "lowshelf";
-            body.frequency.value = 155;
-            body.gain.value = 7;
-            presence.type = "peaking";
-            presence.frequency.value = 1_850;
-            presence.Q.value = 1.1;
-            presence.gain.value = 2.2;
-            compressor.threshold.value = -22;
-            compressor.knee.value = 9;
-            compressor.ratio.value = 3.4;
-            compressor.attack.value = 0.006;
-            compressor.release.value = 0.22;
-            dry.gain.value = 0.86;
-            machine.gain.value = 0;
-            modulator.type = "sine";
-            modulator.frequency.value = 46;
-            modulationDepth.gain.value = 0.18;
-            modulator.connect(modulationDepth).connect(machine.gain);
-
-            source
-              .connect(highpass)
-              .connect(body)
-              .connect(presence)
-              .connect(compressor);
-            compressor.connect(dry).connect(context.destination);
-            compressor.connect(machine).connect(context.destination);
-            ttsSourceRef.current = source;
-            source.onended = () => {
-              try {
-                modulator.stop();
-              } catch {
-                /* already stopped */
-              }
+            const mechanical = buildMechanicalVoice(
+              context,
+              buffer,
+              context.destination,
+            );
+            ttsSourceRef.current = mechanical.source;
+            mechanical.source.onended = () => {
+              mechanical.stop();
               resolve();
             };
             try {
               setState("speaking");
-              modulator.start();
-              source.start();
+              mechanical.start();
             } catch (error) {
+              mechanical.stop();
               reject(error);
             }
           });
         }
+        setVoicePath(PROVIDER_PATH);
         settle(false);
       } catch (error) {
         if (
@@ -728,7 +731,11 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
         ) {
           return;
         }
-        browserFallback();
+        browserFallback(
+          error instanceof Error && error.message
+            ? error.message
+            : "Speech service unreachable.",
+        );
       }
     };
 
@@ -752,6 +759,11 @@ export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
     state,
     setState,
     interim,
+    /**
+     * Which engine last spoke. When this reports the browser, the mechanical
+     * processing is not being applied and the reason says why.
+     */
+    voicePath,
     /** True when the floor can be taken at all — by either route. */
     supported: recognitionSupported || micSupported,
     /** True when spoken words can actually become text this session. */

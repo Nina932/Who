@@ -40,7 +40,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 1.02);
+  // The mechanical chain detunes the returned buffer, and a detuned buffer
+  // plays *longer* — about twelve percent at the current setting. Asking the
+  // provider for slightly quicker delivery lands the processed result at a
+  // deliberate pace rather than a dragging one. See `lib/voice-chain.ts`.
+  const speed = Number(process.env.MORPHEUS_TTS_SPEED ?? 1.1);
   const upstream = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
@@ -55,7 +59,7 @@ export async function POST(request: Request) {
       input: `${DIRECTIONS} ${text}`,
       response_format: "wav",
       sample_rate: 48_000,
-      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 1.02,
+      speed: Number.isFinite(speed) ? Math.min(1.2, Math.max(0.7, speed)) : 1.1,
     }),
     cache: "no-store",
   });

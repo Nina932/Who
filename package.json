@@ -13,6 +13,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "test:watch": "node --import tsx --test --watch tests/*.test.ts",
     "verify:models": "node --import tsx scripts/verify-models.ts",
+    "probe:speech": "node --import tsx scripts/probe-speech.ts",
     "telegram:bot": "node --import tsx scripts/telegram-bot.ts"
   },
   "dependencies": {

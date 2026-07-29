@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import { MECHANICAL } from "../lib/voice-chain";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("spoken personality", () => {
@@ -49,9 +51,13 @@ describe("spoken personality", () => {
     assert.match(source, /MORPHEUS_VOICE_RATE \?\? 0\.88/);
     assert.match(source, /MORPHEUS_VOICE_PITCH \?\? 0\.68/);
     assert.match(source, /guy natural/);
+    // The provider path's character lives in the chain spec rather than in the
+    // hook, so it is asserted against the values themselves — a graph rebuilt
+    // in a different file would still have to satisfy these.
+    assert.equal(MECHANICAL.modulatorHz, 46);
+    assert.equal(MECHANICAL.bodyGainDb, 7);
     const hook = await fs.readFile(path.join(ROOT, "lib/useVoice.ts"), "utf8");
-    assert.match(hook, /modulator\.frequency\.value = 46/);
-    assert.match(hook, /body\.gain\.value = 7/);
+    assert.match(hook, /buildMechanicalVoice\(/);
   });
 
   it("keeps one Morpheus identity in the visible transcript", async () => {

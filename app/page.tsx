@@ -280,6 +280,7 @@ export default function Cockpit() {
         state={voice.state}
         interim={voice.interim}
         micLive={voice.micLive}
+        voicePath={voice.voicePath}
         onInterrupt={voice.stopSpeaking}
       />
 
