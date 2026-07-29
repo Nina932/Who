@@ -36,7 +36,9 @@ export interface ModelSpec {
  * that arrives immediately. Groq is *last* for `hard`, present only so the
  * role still works when it is the only key configured.
  *
- * `judgment` has exactly one candidate, and that is the point. See below.
+ * `judgment` only accepts models named here. That distinction matters: Groq
+ * is not an accidental fallback from Opus, it is an explicitly approved
+ * no-cost judgment seat for operators who do not have an Anthropic account.
  */
 const CANDIDATES: Record<ModelRole, ModelSpec[]> = {
   quick: [
@@ -84,6 +86,15 @@ const CANDIDATES: Record<ModelRole, ModelSpec[]> = {
       label: "Claude Opus",
       maxTokens: 1600,
     },
+    {
+      provider: "groq",
+      model:
+        process.env.MORPHEUS_MODEL_JUDGMENT_GROQ ??
+        process.env.MORPHEUS_MODEL_HARD_GROQ ??
+        "openai/gpt-oss-120b",
+      label: "GPT-OSS 120B Judgment (Groq)",
+      maxTokens: 1600,
+    },
   ],
   vision: [
     {
@@ -120,7 +131,13 @@ export const NO_DOWNGRADE: ModelRole[] = ["judgment"];
  * as an answer from somewhere else.
  */
 export function specFor(role: ModelRole): ModelSpec | null {
-  return CANDIDATES[role].find((spec) => Boolean(keyFor(spec.provider))) ?? null;
+  const candidates =
+    process.env.MORPHEUS_PREFER_GROQ === "true"
+      ? [...CANDIDATES[role]].sort(
+          (a, b) => Number(b.provider === "groq") - Number(a.provider === "groq"),
+        )
+      : CANDIDATES[role];
+  return candidates.find((spec) => Boolean(keyFor(spec.provider))) ?? null;
 }
 
 /** Every candidate for a role, so the UI can show what it would fall back to. */
@@ -143,7 +160,7 @@ export const STACK: Record<ModelRole, ModelSpec> = {
     return specFor("hard") ?? CANDIDATES.hard[0];
   },
   get judgment() {
-    return CANDIDATES.judgment[0];
+    return specFor("judgment") ?? CANDIDATES.judgment[0];
   },
   get vision() {
     return CANDIDATES.vision[0];
@@ -466,6 +483,7 @@ export async function streamRole(
   role: ModelRole,
   options: CallOptions,
   onDelta: (delta: string) => void,
+  signal?: AbortSignal,
 ): Promise<CallResult> {
   const resolved = specFor(role);
   const spec = resolved ?? STACK[role];
@@ -540,6 +558,7 @@ export async function streamRole(
       method: "POST",
       headers: request.headers,
       body: request.body,
+      signal,
     });
 
     if (!response.ok || !response.body) {

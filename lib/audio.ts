@@ -56,8 +56,8 @@ export const SILENT: VoiceLevels = {
  */
 const SPEECH_FLOOR = 0.055;
 
-/** Per-band easing. Treble is allowed to move fastest; bass is heaviest. */
-const EASE = { volume: 0.15, bass: 0.1, mids: 0.12, treble: 0.18 } as const;
+/** Per-band easing. Fast enough to land inside a syllable; bass stays heaviest. */
+const EASE = { volume: 0.24, bass: 0.16, mids: 0.2, treble: 0.3 } as const;
 
 // ── The pure core ────────────────────────────────────────────────────────
 //
@@ -179,6 +179,15 @@ export async function createAnalyser(): Promise<Analyser | null> {
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AudioCtx) return null;
 
+  // The context must be created and resumed while the click is still on the
+  // stack. Waiting for the permission promise first leaves some Chromium
+  // surfaces with a permanently suspended analyser: the microphone indicator
+  // is on, but every sample is perfect silence.
+  const context = new AudioCtx();
+  if (context.state === "suspended") {
+    await context.resume().catch(() => undefined);
+  }
+
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -191,22 +200,19 @@ export async function createAnalyser(): Promise<Analyser | null> {
       },
     });
   } catch {
+    void context.close().catch(() => undefined);
     return null;
   }
-
-  const context = new AudioCtx();
-  // Constructed after `getUserMedia` resolves, which puts it outside the click
-  // that started all this — so autoplay policy can hand back a suspended
-  // context that reads as perfect silence forever. Resume explicitly.
-  if (context.state === "suspended") await context.resume().catch(() => undefined);
 
   const source = context.createMediaStreamSource(stream);
   const analyser = context.createAnalyser();
 
   // 1024 is enough resolution for three bands and cheap enough to run every
-  // frame on a laptop. The smoothing is the analyser's own, on top of ours.
+  // frame on a laptop. Keep the browser's smoothing light because the motion
+  // layer already smooths each band; two heavy filters made speech arrive
+  // visibly late.
   analyser.fftSize = 1024;
-  analyser.smoothingTimeConstant = 0.75;
+  analyser.smoothingTimeConstant = 0.45;
   source.connect(analyser);
 
   const frequency = new Uint8Array(analyser.frequencyBinCount);

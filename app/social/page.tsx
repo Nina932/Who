@@ -19,6 +19,8 @@ import LoopCard from "@/components/social/LoopCard";
 import PlatformCard from "@/components/social/PlatformCard";
 import type { Learning, LoopDefinition, LoopRun } from "@/lib/loops";
 import { PLATFORMS } from "@/lib/social";
+import type { ConnectorStatus } from "@/lib/connectors";
+import type { OperatorProfile } from "@/lib/operator-integrations";
 
 interface EnginePayload {
   loops: LoopDefinition[];
@@ -34,6 +36,8 @@ export default function SocialCommandCenter() {
   const [engine, setEngine] = useState<EnginePayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
+  const [profiles, setProfiles] = useState<OperatorProfile[]>([]);
 
   const platforms = useMemo(
     () => (filter === "all" ? PLATFORMS : PLATFORMS.filter((p) => p.id === filter)),
@@ -42,9 +46,25 @@ export default function SocialCommandCenter() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/loops", { cache: "no-store" });
+      const [response, connectorResponse, integrationResponse] = await Promise.all([
+        fetch("/api/loops", { cache: "no-store" }),
+        fetch("/api/connectors", { cache: "no-store" }),
+        fetch("/api/operator-integrations", { cache: "no-store" }),
+      ]);
       if (!response.ok) throw new Error(`Engine returned ${response.status}`);
       setEngine((await response.json()) as EnginePayload);
+      if (connectorResponse.ok) {
+        const payload = (await connectorResponse.json()) as {
+          connectors: ConnectorStatus[];
+        };
+        setConnectors(payload.connectors);
+      }
+      if (integrationResponse.ok) {
+        const payload = (await integrationResponse.json()) as {
+          profiles: OperatorProfile[];
+        };
+        setProfiles(payload.profiles);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reach the Loops Engine.");
@@ -88,7 +108,10 @@ export default function SocialCommandCenter() {
   }, [engine]);
 
   const gated = surfaceLoops.filter((x) => x.run?.status === "awaiting-go");
-  const allConnected = PLATFORMS.every((p) => p.connected);
+  const allConnected = platforms.every((platform) => {
+    const connector = connectors.find((status) => status.id === platform.connectorId);
+    return connector?.connected === true;
+  });
 
   return (
     <main className="h-screen w-screen overflow-y-auto">
@@ -209,12 +232,28 @@ export default function SocialCommandCenter() {
         <section className="mt-9">
           <div className="flex items-baseline justify-between gap-4">
             <div className="label-lit">Platforms</div>
-            <span className="label">Sample figures · no channel connectors yet</span>
+            <span className="label">Only verified account data appears here</span>
           </div>
           <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {platforms.map((platform) => (
-              <PlatformCard key={platform.id} platform={platform} />
-            ))}
+            {platforms.map((platform) => {
+              const connector = connectors.find(
+                (status) => status.id === platform.connectorId,
+              );
+              return (
+                <PlatformCard
+                  key={platform.id}
+                  platform={platform}
+                  connected={connector?.connected === true}
+                  available={connector?.available === true}
+                  profiles={profiles.filter(
+                    (profile) =>
+                      profile.id === platform.id ||
+                      (platform.id === "linkedin" &&
+                        profile.id === "linkedin-company"),
+                  )}
+                />
+              );
+            })}
           </div>
         </section>
 

@@ -14,12 +14,12 @@
  */
 
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { Bloom, EffectComposer, Noise, Vignette } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import * as THREE from "three";
-import { AGENTS, type Agent } from "@/lib/agents";
+import { AGENTS, FAMILY_LABEL, type Agent } from "@/lib/agents";
 import { SILENT, hueToRgb, type VoiceLevels } from "@/lib/audio";
 import { hueWindow, moodFor, toRgb, type MoodProfile } from "@/lib/mood";
 import type { VoiceState } from "@/lib/useVoice";
@@ -31,6 +31,7 @@ import {
   NEBULA_FRAG,
   NEBULA_VERT,
   SHELL_FRAG,
+  VOLUME_FRAG,
 } from "./shaders";
 
 const SIGNAL = new THREE.Color("#3fe0f0");
@@ -70,8 +71,13 @@ interface VoiceUniforms {
   uBass: { value: number };
   uMids: { value: number };
   uTreble: { value: number };
+  uEmphasis: { value: number };
   uColor: { value: THREE.Color };
   uHot: { value: THREE.Color };
+}
+
+interface FloorUniforms extends VoiceUniforms {
+  uLayer: { value: number };
 }
 
 function voiceUniforms(): VoiceUniforms {
@@ -82,9 +88,14 @@ function voiceUniforms(): VoiceUniforms {
     uBass: { value: 0 },
     uMids: { value: 0 },
     uTreble: { value: 0 },
+    uEmphasis: { value: 0 },
     uColor: { value: new THREE.Color("#3fe0f0") },
     uHot: { value: new THREE.Color("#b9fbff") },
   };
+}
+
+function floorUniforms(layer: number): FloorUniforms {
+  return { ...voiceUniforms(), uLayer: { value: layer } };
 }
 
 interface Tint {
@@ -141,6 +152,9 @@ function drive(
   u.uBass.value = v.bass * gain;
   u.uMids.value = v.mids * gain;
   u.uTreble.value = v.treble * gain;
+  // Keep the attack outside the slow state-energy easing. A hard consonant
+  // should reach the surface on the frame it happens.
+  u.uEmphasis.value = v.emphasis * gain;
 
   // Hue moves inside the window the mood allows, and no further. Mids and
   // treble push it; loudness decides how much of that push actually lands.
@@ -148,8 +162,9 @@ function drive(
   tint.scratch.setRGB(...hueToRgb(hue));
   tint.scratch.lerpColors(tint.base, tint.scratch, Math.min(1, v.volume * 1.4));
 
-  u.uColor.value.lerp(tint.scratch, 0.06);
-  u.uHot.value.lerp(tint.hot, 0.06);
+  // State changes must be legible before a short spoken sentence ends.
+  u.uColor.value.lerp(tint.scratch, 0.13);
+  u.uHot.value.lerp(tint.hot, 0.13);
 }
 
 /**
@@ -170,15 +185,23 @@ function agentPosition(agent: Agent): THREE.Vector3 {
 
 // ── Sky ──────────────────────────────────────────────────────────────────
 
-function Nebula({ energy }: { energy: number }) {
+function Nebula({ mood }: { mood: MoodProfile }) {
+  const tint = useTint(mood);
   const uniforms = useMemo(
-    () => ({ uTime: { value: 0 }, uEnergy: { value: 0 } }),
+    () => ({
+      uTime: { value: 0 },
+      uEnergy: { value: 0 },
+      uBase: { value: new THREE.Color("#18386f") },
+      uAccent: { value: new THREE.Color("#3ec2ff") },
+    }),
     [],
   );
 
   useFrame((_, delta) => {
     uniforms.uTime.value += delta;
-    uniforms.uEnergy.value += (energy - uniforms.uEnergy.value) * 0.03;
+    uniforms.uEnergy.value += (mood.energy - uniforms.uEnergy.value) * 0.03;
+    uniforms.uBase.value.lerp(tint.base, 0.018);
+    uniforms.uAccent.value.lerp(tint.accent, 0.018);
   });
 
   return (
@@ -192,46 +215,6 @@ function Nebula({ energy }: { energy: number }) {
         side={THREE.BackSide}
       />
     </mesh>
-  );
-}
-
-function DustField({ thin }: { thin: boolean }) {
-  const ref = useRef<THREE.Points>(null);
-
-  const positions = useMemo(() => {
-    const count = thin ? 1100 : 3200;
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i += 1) {
-      // A shell rather than a cube, so density stays even as you turn.
-      const r = 30 + Math.random() * 70;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      arr[i * 3 + 1] = r * Math.cos(phi) * 0.6;
-      arr[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    }
-    return arr;
-  }, [thin]);
-
-  useFrame((_, delta) => {
-    if (ref.current) ref.current.rotation.y += delta * 0.006;
-  });
-
-  return (
-    <points ref={ref}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.22}
-        color="#6ea8c8"
-        transparent
-        opacity={0.5}
-        sizeAttenuation
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
   );
 }
 
@@ -249,14 +232,117 @@ interface CoreProps {
   thin: boolean;
 }
 
+function EtherFilaments({
+  mood,
+  levelsRef,
+  reduced,
+}: Pick<CoreProps, "mood" | "levelsRef" | "reduced">) {
+  const group = useRef<THREE.Group>(null);
+  const inner = useMemo(() => {
+    return Array.from({ length: 6 }, (_, index) => {
+      const positions = new Float32Array(72 * 3);
+      const phase = index * 0.71;
+      const tilt = new THREE.Euler(
+        0.28 + index * 0.39,
+        -0.34 + index * 0.51,
+        index * 0.63,
+      );
+      for (let point = 0; point < 72; point += 1) {
+        const angle = (point / 72) * Math.PI * 2;
+        const radius =
+          4.35 +
+          Math.sin(angle * 3 + phase) * 0.42 +
+          Math.sin(angle * 7 - phase) * 0.16;
+        const vector = new THREE.Vector3(
+          Math.cos(angle) * radius,
+          Math.sin(angle) * radius * (0.76 + (index % 3) * 0.08),
+          Math.sin(angle * 2 + phase) * (0.34 + (index % 2) * 0.16),
+        ).applyEuler(tilt);
+        positions.set([vector.x, vector.y, vector.z], point * 3);
+      }
+      return positions;
+    });
+  }, []);
+  const outer = useMemo(() => {
+    return Array.from({ length: 4 }, (_, index) => {
+      const positions = new Float32Array(96 * 3);
+      const phase = index * 1.17;
+      const tilt = new THREE.Euler(
+        0.48 + index * 0.61,
+        0.18 + index * 0.46,
+        -0.36 + index * 0.73,
+      );
+      for (let point = 0; point < 96; point += 1) {
+        const angle = (point / 96) * Math.PI * 2;
+        const radius = 5.85 + index * 0.18 + Math.sin(angle * 5 + phase) * 0.12;
+        const vector = new THREE.Vector3(
+          Math.cos(angle) * radius,
+          Math.sin(angle) * radius * 0.72,
+          Math.sin(angle * 3 + phase) * 0.22,
+        ).applyEuler(tilt);
+        positions.set([vector.x, vector.y, vector.z], point * 3);
+      }
+      return positions;
+    });
+  }, []);
+  const tint = useTint(mood);
+  const gain = reduced ? 0.3 : 1;
+
+  useFrame((state, delta) => {
+    if (!group.current) return;
+    const levels = levelsRef?.current ?? SILENT;
+    const loudness = Math.sqrt(levels.volume);
+    group.current.rotation.y += delta * (0.08 + loudness * 0.36 * gain);
+    group.current.rotation.x =
+      Math.sin(state.clock.getElapsedTime() * 0.23) * 0.13 +
+      Math.sqrt(levels.mids) * 0.08 * gain;
+    group.current.rotation.z += delta * (0.025 + Math.sqrt(levels.treble) * 0.16 * gain);
+    group.current.scale.set(
+      1 + Math.sqrt(levels.bass) * 0.055 * gain + levels.emphasis * 0.04 * gain,
+      1 + loudness * 0.035 * gain,
+      1 - levels.emphasis * 0.025 * gain,
+    );
+    group.current.children.forEach((child, index) => {
+      const material = (child as THREE.Line).material as THREE.LineBasicMaterial;
+      material.color.lerp(
+        index % 5 === 0 ? OUTSIDE : tint.hot,
+        0.06,
+      );
+      material.opacity =
+        (index < inner.length ? 0.16 : 0.24) +
+        mood.energy * 0.08 +
+        loudness * 0.22 * gain +
+        levels.emphasis * 0.18 * gain;
+    });
+  });
+
+  return (
+    <group ref={group}>
+      {[...inner, ...outer].map((positions, index) => (
+        <lineLoop key={index}>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+          </bufferGeometry>
+          <lineBasicMaterial
+            color={index % 5 === 0 ? OUTSIDE : tint.hot}
+            transparent
+            opacity={index < inner.length ? 0.16 : 0.24}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </lineLoop>
+      ))}
+    </group>
+  );
+}
+
 function Core({ mood, levelsRef, reduced, thin }: CoreProps) {
   const group = useRef<THREE.Group>(null);
-  const ringA = useRef<THREE.Mesh>(null);
-  const ringB = useRef<THREE.Mesh>(null);
   const swarm = useRef<THREE.Points>(null);
 
   const coreUniforms = useMemo(voiceUniforms, []);
   const shellUniforms = useMemo(voiceUniforms, []);
+  const volumeUniforms = useMemo(voiceUniforms, []);
   const tint = useTint(mood);
 
   // Reduced motion damps the voice reaction rather than removing it: the orb
@@ -265,10 +351,12 @@ function Core({ mood, levelsRef, reduced, thin }: CoreProps) {
   const gain = reduced ? 0.3 : 1;
 
   const swarmPositions = useMemo(() => {
-    const count = thin ? 600 : 1600;
+    const count = thin ? 900 : 2600;
     const arr = new Float32Array(count * 3);
     for (let i = 0; i < count; i += 1) {
-      const r = 3.4 + Math.random() * 1.9;
+      // Fill the volume, not only the perimeter. The reference reads as a
+      // suspended energy field with depth, never as a halo around an empty disc.
+      const r = 1.2 + Math.cbrt(Math.random()) * 5.2;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
@@ -284,45 +372,75 @@ function Core({ mood, levelsRef, reduced, thin }: CoreProps) {
     // straight through — easing twice would only add lag.
     const v = levelsRef?.current ?? SILENT;
 
-    for (const u of [coreUniforms, shellUniforms]) drive(u, v, mood, tint, gain, delta);
-
-    // The slow ambient breath. Its rate is the mood's, which is what makes
-    // "thinking" and "speaking" legible from across the room with the sound
-    // off — one of them is visibly hurrying and the other is not.
-    const breath = 1 + Math.sin(t * mood.pulse * Math.PI * 2) * 0.035;
+    for (const u of [coreUniforms, shellUniforms, volumeUniforms]) {
+      drive(u, v, mood, tint, gain, delta);
+    }
 
     if (group.current) {
-      group.current.rotation.y += delta * 0.06;
-      group.current.rotation.x = Math.sin(t * 0.18) * 0.1;
-      group.current.scale.setScalar(breath * (1 + v.volume * 0.06 * gain));
+      group.current.rotation.y += delta * (0.075 + mood.energy * 0.025);
+      group.current.rotation.x =
+        Math.sin(t * 0.18) * 0.1 + Math.sin(t * 0.41) * 0.035;
+      // Square-root mapping gives quiet speech useful visual range without
+      // letting a loud room exceed the existing cap.
+      const loudness = Math.sqrt(v.volume);
+      const bass = Math.sqrt(v.bass);
+      const mids = Math.sqrt(v.mids);
+      const treble = Math.sqrt(v.treble);
+      const voiceScale = 1 + loudness * 0.085 * gain;
+      // Breathing is deliberately asymmetric. Uniform scale is a pulse; three
+      // slightly different phases make the volume inhale, roll and settle like
+      // liquid ether even in silence.
+      const breathRate = Math.max(0.12, mood.pulse) * Math.PI * 2;
+      const breathX = Math.sin(t * breathRate) * (0.018 + mood.energy * 0.01);
+      const breathY =
+        Math.sin(t * breathRate * 0.79 + 1.7) * (0.014 + mood.energy * 0.012);
+      const breathZ =
+        Math.sin(t * breathRate * 1.17 + 3.1) * (0.016 + mood.energy * 0.008);
+      const release = mood.mood === "resolved" ? 0.035 : 0;
+      const unsettled = mood.mood === "unsettled" ? 0.025 : 0;
+      const contraction = mood.mood === "warning" ? 0.91 : 1;
+      const executeY = mood.mood === "focused" ? 1.13 : 1;
+      const presence = 1.15;
+      group.current.scale.set(
+        (1 + breathX + release + unsettled + bass * 0.065 * gain + v.emphasis * 0.04 * gain) *
+          voiceScale *
+          contraction *
+          presence,
+        (1 + breathY + release - unsettled + mids * 0.055 * gain) *
+          voiceScale *
+          contraction *
+          executeY *
+          presence,
+        (1 + breathZ + release + treble * 0.045 * gain - v.emphasis * 0.025 * gain) *
+          voiceScale *
+          contraction *
+          presence,
+      );
     }
     if (swarm.current) {
       // The swarm is thrown outward by loudness — the halo around the orb
       // when somebody is actually talking.
-      swarm.current.rotation.y -= delta * (0.22 + v.mids * 0.5 * gain);
-      swarm.current.rotation.z += delta * 0.05;
-      swarm.current.scale.setScalar(1 + v.volume * 0.18 * gain);
+      const loudness = Math.sqrt(v.volume);
+      const mids = Math.sqrt(v.mids);
+      const treble = Math.sqrt(v.treble);
+      swarm.current.rotation.y -= delta * (0.26 + mids * 1.3 * gain);
+      swarm.current.rotation.z += delta * (0.08 + treble * 0.6 * gain);
+      swarm.current.scale.setScalar(1 + loudness * 0.42 * gain + v.emphasis * 0.14 * gain);
       const mat = swarm.current.material as THREE.PointsMaterial;
-      mat.opacity = 0.3 + mood.energy * 0.25 + v.treble * 0.35 * gain;
+      mat.opacity =
+        0.3 +
+        mood.energy * 0.25 +
+        loudness * 0.28 * gain +
+        treble * 0.5 * gain +
+        v.emphasis * 0.24 * gain;
       mat.color.lerp(tint.hot, 0.05);
-    }
-    // Counter-rotating rings: the cheapest way to read as machinery.
-    for (const [ring, sign, rate] of [
-      [ringA, 1, 0.24],
-      [ringB, -1, 0.17],
-    ] as const) {
-      if (!ring.current) continue;
-      ring.current.rotation.z += delta * sign * (rate + v.bass * 0.4 * gain);
-      const mat = ring.current.material as THREE.MeshBasicMaterial;
-      mat.color.lerp(tint.accent, 0.05);
-      mat.opacity = (sign > 0 ? 0.5 : 0.28) + mood.energy * 0.35 + v.volume * 0.4 * gain;
     }
   });
 
   return (
     <group ref={group}>
       <mesh>
-        <icosahedronGeometry args={[3.6, 20]} />
+        <icosahedronGeometry args={[5.2, 20]} />
         <shaderMaterial
           vertexShader={CORE_VERT}
           fragmentShader={CORE_FRAG}
@@ -333,8 +451,8 @@ function Core({ mood, levelsRef, reduced, thin }: CoreProps) {
         />
       </mesh>
 
-      <mesh scale={1.2}>
-        <icosahedronGeometry args={[3.6, 12]} />
+      <mesh scale={1.018} rotation={[0.18, -0.26, 0.12]}>
+        <icosahedronGeometry args={[5.2, 12]} />
         <shaderMaterial
           vertexShader={CORE_VERT}
           fragmentShader={SHELL_FRAG}
@@ -346,41 +464,58 @@ function Core({ mood, levelsRef, reduced, thin }: CoreProps) {
         />
       </mesh>
 
+      <mesh scale={0.93} rotation={[-0.21, 0.32, -0.16]}>
+        <icosahedronGeometry args={[5.2, 5]} />
+        <meshBasicMaterial
+          color={tint.hot}
+          wireframe
+          transparent
+          opacity={0.032}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {[0.76, 0.52].map((scale, index) => (
+        <mesh
+          key={scale}
+          scale={scale}
+          rotation={
+            index === 0
+              ? [-0.28, 0.41, -0.19]
+              : [0.36, -0.31, 0.27]
+          }
+        >
+          <icosahedronGeometry args={[5.2, 10]} />
+          <shaderMaterial
+            vertexShader={CORE_VERT}
+            fragmentShader={VOLUME_FRAG}
+            uniforms={volumeUniforms}
+            transparent
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      ))}
+
+      <EtherFilaments mood={mood} levelsRef={levelsRef} reduced={reduced} />
+
       <points ref={swarm}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" args={[swarmPositions, 3]} />
         </bufferGeometry>
         <pointsMaterial
-          size={0.075}
+          size={0.052}
           color="#d8feff"
           transparent
-          opacity={0.55}
+          opacity={0.64}
           sizeAttenuation
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </points>
 
-      <mesh ref={ringA} rotation={[Math.PI / 2.4, 0.4, 0]}>
-        <torusGeometry args={[6.6, 0.022, 8, 180]} />
-        <meshBasicMaterial
-          color={SIGNAL}
-          transparent
-          opacity={0.6}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
-      <mesh ref={ringB} rotation={[Math.PI / 1.7, -0.7, 0.5]}>
-        <torusGeometry args={[8.1, 0.014, 8, 180]} />
-        <meshBasicMaterial
-          color={SIGNAL}
-          transparent
-          opacity={0.4}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
     </group>
   );
 }
@@ -406,7 +541,7 @@ function WaveFloor({
   reduced: boolean;
   thin: boolean;
 }) {
-  const uniforms = useMemo(voiceUniforms, []);
+  const layers = useMemo(() => [0, 1, 2].map(floorUniforms), []);
   const tint = useTint(mood);
   const gain = reduced ? 0.3 : 1;
 
@@ -415,25 +550,36 @@ function WaveFloor({
   const segments = thin ? 120 : 240;
 
   useFrame((_, delta) => {
-    drive(uniforms, levelsRef?.current ?? SILENT, mood, tint, gain, delta);
-    // The floor takes the accent rather than the body colour, so the crests
-    // stay distinct from the orb sitting on them.
-    uniforms.uColor.value.lerp(tint.accent, 0.04);
+    for (const uniforms of layers) {
+      drive(uniforms, levelsRef?.current ?? SILENT, mood, tint, gain, delta);
+      // The floor takes the accent rather than the body colour, so the crests
+      // stay distinct from the orb sitting on them.
+      uniforms.uColor.value.lerp(tint.accent, 0.04);
+    }
   });
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -16, 0]}>
-      <planeGeometry args={[130, 130, segments, segments]} />
-      <shaderMaterial
-        vertexShader={FLOOR_VERT}
-        fragmentShader={FLOOR_FRAG}
-        uniforms={uniforms}
-        transparent
-        depthWrite={false}
-        side={THREE.DoubleSide}
-        blending={THREE.AdditiveBlending}
-      />
-    </mesh>
+    <group>
+      {layers.map((uniforms, index) => (
+        <mesh
+          key={index}
+          rotation={[-Math.PI / 2, 0, (index - 1) * 0.025]}
+          position={[0, -15.65 - index * 0.42, index * 0.65]}
+          scale={1 - index * 0.045}
+        >
+          <planeGeometry args={[130, 130, segments, segments]} />
+          <shaderMaterial
+            vertexShader={FLOOR_VERT}
+            fragmentShader={FLOOR_FRAG}
+            uniforms={uniforms}
+            transparent
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      ))}
+    </group>
   );
 }
 
@@ -458,7 +604,7 @@ function RisingStreams({
   const ref = useRef<THREE.Points>(null);
   const tint = useTint(mood);
   const gain = reduced ? 0.3 : 1;
-  const count = thin ? 700 : 2200;
+  const count = thin ? 320 : 950;
 
   const { positions, seeds } = useMemo(() => {
     const positions = new Float32Array(count * 3);
@@ -466,13 +612,13 @@ function RisingStreams({
     // update never has to recover them by trigonometry.
     const seeds = new Float32Array(count * 3);
     for (let i = 0; i < count; i += 1) {
-      const radius = 2 + Math.pow(Math.random(), 0.6) * 11;
+      const radius = 1.1 + Math.pow(Math.random(), 0.72) * 5.7;
       const theta = Math.random() * Math.PI * 2;
       seeds[i * 3] = radius;
       seeds[i * 3 + 1] = theta;
       seeds[i * 3 + 2] = 0.5 + Math.random() * 1.6;
       positions[i * 3] = Math.cos(theta) * radius;
-      positions[i * 3 + 1] = -16 + Math.random() * 19.5;
+      positions[i * 3 + 1] = -15.5 + Math.random() * 18.5;
       positions[i * 3 + 2] = Math.sin(theta) * radius;
     }
     return { positions, seeds };
@@ -496,7 +642,7 @@ function RisingStreams({
         const theta = Math.random() * Math.PI * 2;
         const radius = seeds[i * 3];
         array[i * 3] = Math.cos(theta) * radius;
-        array[i * 3 + 1] = -16;
+        array[i * 3 + 1] = -15.5;
         array[i * 3 + 2] = Math.sin(theta) * radius;
         seeds[i * 3 + 1] = theta;
       } else {
@@ -511,7 +657,7 @@ function RisingStreams({
 
     const mat = points.material as THREE.PointsMaterial;
     mat.color.lerp(tint.hot, 0.05);
-    mat.opacity = 0.3 + mood.energy * 0.35 + v.volume * 0.5 * gain;
+    mat.opacity = 0.2 + mood.energy * 0.24 + v.volume * 0.38 * gain;
   });
 
   return (
@@ -520,7 +666,7 @@ function RisingStreams({
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
       <pointsMaterial
-        size={0.16}
+        size={0.11}
         transparent
         opacity={0.4}
         sizeAttenuation
@@ -546,7 +692,7 @@ interface NodeProps {
 function AgentNode({ agent, position, attendRef, isPrimary, selected, onSelect }: NodeProps) {
   const shape = useRef<THREE.Mesh>(null);
   const halo = useRef<THREE.Mesh>(null);
-  const label = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState(false);
   const isIntegration = agent.family === "integration";
 
   // Integration seats are violet, not dimmer cyan. They are a different kind
@@ -558,98 +704,77 @@ function AgentNode({ agent, position, attendRef, isPrimary, selected, onSelect }
   );
   const lit = useMemo(() => color.clone(), [color]);
 
-  useFrame((state, delta) => {
-    const t = state.clock.getElapsedTime();
+  useFrame((_, delta) => {
     const attend = attendRef.current?.[agent.id] ?? 0;
 
     if (shape.current) {
-      // One slow axis. Tumbling on two made every node read as debris.
-      shape.current.rotation.y += delta * 0.28;
-      const s = (isIntegration ? 0.78 : 1) * (1 + attend * 0.55 + (selected ? 0.2 : 0));
+      shape.current.rotation.y += delta * 0.08;
+      const s = (isIntegration ? 0.72 : 1) * (1 + attend * 1.5 + (selected ? 0.35 : 0));
       shape.current.scale.setScalar(s);
       lit.copy(color).lerp(ATTEND, attend);
       (shape.current.material as THREE.MeshBasicMaterial).color.copy(lit);
     }
 
     if (halo.current) {
-      const pulse = 1 + Math.sin(t * 2.4 + position.x) * 0.1;
-      // Was 1.5 and read as a saucer sitting in front of the node rather than
-      // as light coming off it. A halo wider than the shape stops being a glow.
-      halo.current.scale.setScalar((0.8 + attend * 0.9) * pulse);
+      halo.current.scale.setScalar(1.8 + attend * 1.9 + (selected ? 0.45 : 0));
       const mat = halo.current.material as THREE.MeshBasicMaterial;
-      mat.opacity = (isIntegration ? 0.14 : 0.22) + attend * 0.4;
+      mat.opacity = 0.035 + attend * 0.34 + (selected ? 0.08 : 0);
       mat.color.copy(lit);
-      halo.current.lookAt(state.camera.position);
-    }
-
-    // The label is DOM, so it is styled from the same eased value rather than
-    // re-rendered — sixty renders a second per node would be twenty thousand.
-    if (label.current) {
-      label.current.style.opacity = String(
-        (isIntegration ? 0.5 : 0.82) + attend * 0.18,
-      );
-      label.current.style.color = attend > 0.25 ? "var(--color-attend)" : "";
     }
   });
 
   return (
     <group position={position}>
       <mesh
-        ref={shape}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(agent.id);
         }}
         onPointerOver={() => {
+          setHovered(true);
           document.body.style.cursor = "pointer";
         }}
         onPointerOut={() => {
+          setHovered(false);
           document.body.style.cursor = "default";
         }}
       >
-        <octahedronGeometry args={[0.46, 0]} />
-        <meshBasicMaterial
-          color={color}
-          transparent
-          opacity={0.95}
-          blending={THREE.AdditiveBlending}
-        />
+        <sphereGeometry args={[0.62, 8, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
-      {/* Camera-facing halo — a flat disc is cheaper than a real glow and,
-          under bloom, indistinguishable. */}
-      <mesh ref={halo}>
-        <circleGeometry args={[0.5, 24]} />
+      <mesh ref={shape}>
+        <sphereGeometry args={[0.12, 10, 10]} />
         <meshBasicMaterial
           color={color}
           transparent
-          opacity={0.2}
+          opacity={0.9}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
         />
       </mesh>
 
-      {/*
-        No `distanceFactor`. Scaling labels with depth is what made the far
-        side of the constellation unreadable: "Chief of staff" at eleven
-        pixels shrinks to four, and a name nobody can read is worse than no
-        name at all. Constant screen size costs the depth cue and buys back
-        every label on screen.
-      */}
-      <Html center style={{ pointerEvents: "none" }} zIndexRange={[10, 0]}>
-        <div
-          ref={label}
-          className={[
-            "node-label",
-            isPrimary ? "node-label-primary" : "",
-            isIntegration ? "node-label-below" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-        >
-          {agent.name}
-        </div>
-      </Html>
+      <mesh ref={halo}>
+        <sphereGeometry args={[0.17, 8, 8]} />
+        <meshBasicMaterial
+          color={color}
+          wireframe
+          transparent
+          opacity={0.24}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {hovered || selected ? (
+        <Html position={[0, 0.72, 0]} center zIndexRange={[30, 20]}>
+          <div className="agent-hover-label">
+            <span>{agent.name}</span>
+            <small>{FAMILY_LABEL[agent.family]}</small>
+          </div>
+        </Html>
+      ) : null}
+
     </group>
   );
 }
@@ -660,14 +785,20 @@ function Link({
   attendRef,
   mood,
   integration,
+  voiceState,
+  primary,
+  taskLoad,
 }: {
   agentId: string;
   position: THREE.Vector3;
   attendRef: React.RefObject<Record<string, number>>;
   mood: MoodProfile;
   integration: boolean;
+  voiceState: VoiceState;
+  primary: boolean;
+  taskLoad: number;
 }) {
-  const packet = useRef<THREE.Mesh>(null);
+  const sparks = useRef<Array<THREE.Mesh | null>>([]);
   const tint = useTint(mood);
   const rest = useMemo(() => (integration ? OUTSIDE.clone() : SIGNAL.clone()), [integration]);
 
@@ -687,7 +818,7 @@ function Link({
   }, [position]);
 
   const geometry = useMemo(
-    () => new THREE.TubeGeometry(curve, 40, 0.018, 6, false),
+    () => new THREE.TubeGeometry(curve, 40, 0.018, 5, false),
     [curve],
   );
 
@@ -700,25 +831,49 @@ function Link({
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
     const attend = attendRef.current?.[agentId] ?? 0;
+    const working =
+      voiceState === "thinking" ||
+      voiceState === "executing" ||
+      voiceState === "speaking";
+    const stateDrive =
+      voiceState === "executing"
+        ? 1
+        : voiceState === "thinking"
+          ? 0.74
+          : voiceState === "speaking"
+            ? 0.58
+            : 0;
+    const electrical = attend * stateDrive;
+    const flicker =
+      0.72 +
+      Math.sin(t * (17 + taskLoad * 2.7) + agentId.length * 0.83) * 0.2 +
+      Math.sin(t * 41.0 + agentId.length) * 0.08;
     if (material.current) {
       material.current.opacity =
-        (integration ? 0.1 : 0.2) + attend * 0.7 + mood.energy * 0.06;
+        0.003 + electrical * (0.48 + taskLoad * 0.07) * flicker;
       // Idle links carry the mood; attending links go amber regardless, so
       // "who is working on this" is never something the palette can hide.
       material.current.color
         .copy(rest)
         .lerp(tint.accent, integration ? 0 : 0.5)
-        .lerp(ATTEND, attend);
+        .lerp(tint.hot, electrical * 0.72)
+        .lerp(ATTEND, primary ? electrical * 0.35 : 0);
     }
-    if (packet.current) {
-      // Traffic only runs while the seat is actually attending.
-      packet.current.visible = attend > 0.08;
-      const p = (t * (0.22 + mood.energy * 0.2)) % 1;
+    const sparkCount = primary ? Math.min(3, 1 + taskLoad) : 1;
+    sparks.current.forEach((spark, index) => {
+      if (!spark) return;
+      spark.visible = working && electrical > 0.055 && index < sparkCount;
+      const phase = index / Math.max(1, sparkCount);
+      const p =
+        (t * (0.32 + mood.energy * 0.32 + taskLoad * 0.045) + phase) % 1;
       curve.getPoint(p, scratch);
-      packet.current.position.copy(scratch);
-      packet.current.scale.setScalar(0.5 + attend);
-      (packet.current.material as THREE.MeshBasicMaterial).opacity = attend;
-    }
+      spark.position.copy(scratch);
+      const surge = 0.7 + Math.sin(t * 26 + index * 2.1) * 0.24;
+      spark.scale.setScalar((0.42 + electrical * 0.95) * surge);
+      const sparkMaterial = spark.material as THREE.MeshBasicMaterial;
+      sparkMaterial.opacity = Math.min(1, electrical * (0.75 + flicker * 0.4));
+      sparkMaterial.color.copy(tint.hot).lerp(ATTEND, primary ? 0.28 : 0);
+    });
   });
 
   return (
@@ -733,15 +888,22 @@ function Link({
           depthWrite={false}
         />
       </mesh>
-      <mesh ref={packet}>
-        <sphereGeometry args={[0.09, 8, 8]} />
-        <meshBasicMaterial
-          color={ATTEND}
-          transparent
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
+      {[0, 1, 2].map((index) => (
+        <mesh
+          key={index}
+          ref={(node) => {
+            sparks.current[index] = node;
+          }}
+        >
+          <sphereGeometry args={[0.13, 8, 8]} />
+          <meshBasicMaterial
+            color={ATTEND}
+            transparent
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -751,12 +913,14 @@ function Workforce({
   supportingIds,
   selectedId,
   mood,
+  voiceState,
   onSelect,
 }: {
   primaryId: string | null;
   supportingIds: string[];
   selectedId: string | null;
   mood: MoodProfile;
+  voiceState: VoiceState;
   onSelect: (id: string) => void;
 }) {
   const group = useRef<THREE.Group>(null);
@@ -773,7 +937,7 @@ function Workforce({
     if (group.current) group.current.rotation.y += delta * 0.014;
     for (const { agent } of nodes) {
       const target =
-        agent.id === primaryId ? 1 : supportingIds.includes(agent.id) ? 0.4 : 0;
+        agent.id === primaryId ? 1 : supportingIds.includes(agent.id) ? 0.62 : 0;
       const current = attendRef.current[agent.id] ?? 0;
       attendRef.current[agent.id] = current + (target - current) * 0.06;
     }
@@ -790,6 +954,9 @@ function Workforce({
               attendRef={attendRef}
               mood={mood}
               integration={agent.family === "integration"}
+              voiceState={voiceState}
+              primary={agent.id === primaryId}
+              taskLoad={Math.max(1, 1 + supportingIds.length)}
             />
             <AgentNode
               agent={agent}
@@ -814,7 +981,7 @@ function Workforce({
  * losing the core.
  */
 function CameraRig({ focusId }: { focusId: string | null }) {
-  const desired = useRef(new THREE.Vector3(0, 3, 34));
+  const desired = useRef(new THREE.Vector3(0, 5, 34));
   const look = useRef(new THREE.Vector3(0, 0, 0));
   const pointer = useRef({ x: 0, y: 0 });
 
@@ -829,9 +996,11 @@ function CameraRig({ focusId }: { focusId: string | null }) {
     pointer.current.x += (state.pointer.x - pointer.current.x) * 0.04;
     pointer.current.y += (state.pointer.y - pointer.current.y) * 0.04;
 
-    const orbit = t * 0.035 + pointer.current.x * 0.55;
+    // Cursor drift is atmospheric, not navigation. A larger offset made the
+    // lights move away while the operator was trying to identify one.
+    const orbit = t * 0.035 + pointer.current.x * 0.08;
     const radius = 34 - (focusPos ? 2.5 : 0);
-    const height = 3 + pointer.current.y * 3.5 + Math.sin(t * 0.21) * 1.2;
+    const height = 5 + pointer.current.y * 0.6 + Math.sin(t * 0.21) * 1.2;
 
     desired.current.set(
       Math.sin(orbit) * radius,
@@ -910,9 +1079,11 @@ export default function CockpitScene({
   // palette, the microphone is fast and owns the motion. See `lib/mood.ts`.
   const mood = moodFor(voiceState);
 
-  // Effects start on and are switched off permanently the first time they
-  // fail, rather than retried every frame.
-  const [effects, setEffects] = useState(true);
+  // The shader materials carry their own additive light. Keep the composer
+  // opt-out by default: some valid WebGL2 implementations accept the float
+  // target and then return a black frame without throwing, which previously
+  // left only the HTML labels visible.
+  const [effects, setEffects] = useState(false);
 
   // Read after mount: `matchMedia` does not exist during the server render,
   // and reading it during the first client render would mismatch hydration.
@@ -921,7 +1092,7 @@ export default function CockpitScene({
 
   return (
     <Canvas
-      camera={{ position: [0, 3, 34], fov: 55, near: 0.1, far: 300 }}
+      camera={{ position: [0, 5, 34], fov: 55, near: 0.1, far: 300 }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
       dpr={environment.thin ? [1, 1.25] : [1, 2]}
       onPointerMissed={() => onSelect(null)}
@@ -937,8 +1108,7 @@ export default function CockpitScene({
         }
       }}
     >
-      <Nebula energy={mood.energy} />
-      <DustField thin={environment.thin} />
+      <Nebula mood={mood} />
       <WaveFloor
         mood={mood}
         levelsRef={levelsRef}
@@ -962,6 +1132,7 @@ export default function CockpitScene({
         supportingIds={supportingIds}
         selectedId={selectedId}
         mood={mood}
+        voiceState={voiceState}
         onSelect={onSelect}
       />
       <CameraRig focusId={primaryId} />

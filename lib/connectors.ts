@@ -21,12 +21,14 @@ export type ConnectorId =
   | "google-drive"
   | "google-calendar"
   | "gmail"
+  | "gmail-company"
   | "google-slides"
   | "google-sheets"
+  | "facebook-profile"
   | "linkedin"
   | "slack";
 
-export type OAuthProvider = "google" | "linkedin" | "slack";
+export type OAuthProvider = "google" | "facebook" | "linkedin" | "slack";
 
 export interface ConnectorSpec {
   id: ConnectorId;
@@ -61,7 +63,7 @@ export const CONNECTORS: ConnectorSpec[] = [
   },
   {
     id: "gmail",
-    name: "Email",
+    name: "Email — Personal",
     provider: "google",
     ownerAgentId: "chief-of-staff",
     // compose, not send: drafts wait for a human.
@@ -69,7 +71,21 @@ export const CONNECTORS: ConnectorSpec[] = [
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.compose",
     ],
-    description: "Read the inbox and prepare drafts. Never sends unattended.",
+    description:
+      "Personal mailbox. Read the inbox and prepare drafts. Never sends unattended.",
+    writes: true,
+  },
+  {
+    id: "gmail-company",
+    name: "Email — Company",
+    provider: "google",
+    ownerAgentId: "chief-of-staff",
+    scopes: [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+    ],
+    description:
+      "Company mailbox, stored independently from Personal. Never sends unattended.",
     writes: true,
   },
   {
@@ -95,6 +111,16 @@ export const CONNECTORS: ConnectorSpec[] = [
     ],
     description: "Append run outcomes to a log so the numbers live somewhere you can pivot.",
     writes: true,
+  },
+  {
+    id: "facebook-profile",
+    name: "Facebook — Personal",
+    provider: "facebook",
+    ownerAgentId: "social",
+    scopes: ["public_profile"],
+    description:
+      "Verify your personal Facebook identity. Meta does not permit apps to read or publish a personal timeline.",
+    writes: false,
   },
   {
     id: "slack",
@@ -155,10 +181,20 @@ function providerConfig(provider: OAuthProvider): ProviderConfig {
         // Without offline access the connection dies silently within the hour.
         extraAuthParams: {
           access_type: "offline",
-          prompt: "consent",
+          // Required for two Gmail slots: the operator must be able to choose
+          // a different Google account instead of silently reusing the first.
+          prompt: "select_account consent",
           include_granted_scopes: "true",
         },
       }
+    : provider === "facebook"
+      ? {
+          authUrl: "https://www.facebook.com/dialog/oauth",
+          tokenUrl: "https://graph.facebook.com/oauth/access_token",
+          clientId: process.env.FACEBOOK_APP_ID,
+          clientSecret: process.env.FACEBOOK_APP_SECRET,
+          extraAuthParams: {},
+        }
     : provider === "linkedin"
       ? {
           authUrl: "https://www.linkedin.com/oauth/v2/authorization",
@@ -186,10 +222,18 @@ export function oauthConfigured(): boolean {
   return providerConfigured("google");
 }
 
-function redirectUri(): string {
+function redirectUri(provider: OAuthProvider): string {
+  const configured =
+    provider === "google"
+      ? process.env.GOOGLE_OAUTH_REDIRECT_URI
+      : provider === "facebook"
+        ? process.env.FACEBOOK_OAUTH_REDIRECT_URI
+        : provider === "linkedin"
+          ? process.env.LINKEDIN_OAUTH_REDIRECT_URI
+          : process.env.SLACK_OAUTH_REDIRECT_URI;
   return (
-    process.env.GOOGLE_OAUTH_REDIRECT_URI ??
-    `${process.env.MORPHEUS_BASE_URL ?? "http://localhost:3000"}/api/connectors/callback`
+    configured ??
+    `${process.env.MORPHEUS_BASE_URL ?? "http://127.0.0.1:4173"}/api/connectors/callback`
   );
 }
 
@@ -208,7 +252,7 @@ export function authorizeUrl(connectorId: ConnectorId, state: string): string | 
   const config = providerConfig(spec.provider);
   const params = new URLSearchParams({
     client_id: config.clientId as string,
-    redirect_uri: redirectUri(),
+    redirect_uri: redirectUri(spec.provider),
     response_type: "code",
     scope: spec.scopes.join(" "),
     state,
@@ -240,17 +284,21 @@ export async function exchangeCode(
   const config = providerConfig(spec.provider);
 
   try {
-    const response = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: config.clientId as string,
-        client_secret: config.clientSecret as string,
-        redirect_uri: redirectUri(),
-        grant_type: "authorization_code",
-      }),
+    const tokenParams = new URLSearchParams({
+      code,
+      client_id: config.clientId as string,
+      client_secret: config.clientSecret as string,
+      redirect_uri: redirectUri(spec.provider),
+      grant_type: "authorization_code",
     });
+    const response =
+      spec.provider === "facebook"
+        ? await fetch(`${config.tokenUrl}?${tokenParams.toString()}`)
+        : await fetch(config.tokenUrl, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: tokenParams,
+          });
 
     if (!response.ok) {
       return { ok: false, error: `token exchange ${response.status}: ${(await response.text()).slice(0, 200)}` };
@@ -276,7 +324,53 @@ export async function exchangeCode(
 
     // Slack bot tokens do not expire unless rotation is enabled, so there is
     // no refresh to schedule — parking the expiry far out is honest here.
-    const expiresIn = data.expires_in ?? (spec.provider === "slack" ? 60 * 60 * 24 * 3650 : 3600);
+    const expiresIn =
+      data.expires_in ??
+      (spec.provider === "slack" ? 60 * 60 * 24 * 3650 : 3600);
+
+    let account: string | undefined;
+    if (connectorId === "gmail" || connectorId === "gmail-company") {
+      try {
+        const profile = await fetch(
+          "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+        if (profile.ok) {
+          const identity = (await profile.json()) as { emailAddress?: string };
+          account = identity.emailAddress ?? account;
+        }
+      } catch {
+        // The token is still valid even if this optional identity label fails.
+      }
+    } else if (connectorId === "facebook-profile") {
+      try {
+        const params = new URLSearchParams({
+          fields: "id,name",
+          access_token: token,
+        });
+        const profile = await fetch(
+          `https://graph.facebook.com/me?${params.toString()}`,
+        );
+        if (profile.ok) {
+          const identity = (await profile.json()) as { name?: string };
+          account = identity.name;
+        }
+      } catch {
+        // Identity is confirmed later by the explicit live probe.
+      }
+    } else if (connectorId === "linkedin") {
+      try {
+        const profile = await fetch("https://api.linkedin.com/v2/userinfo", {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (profile.ok) {
+          const identity = (await profile.json()) as { name?: string };
+          account = identity.name;
+        }
+      } catch {
+        // Identity is confirmed later by the explicit live probe.
+      }
+    }
 
     await mutate<TokenStore, null>(TOKENS, {}, (current) => ({
       next: {
@@ -286,6 +380,7 @@ export async function exchangeCode(
           refreshToken: data.refresh_token ?? current[connectorId]?.refreshToken,
           expiresAt: Date.now() + expiresIn * 1000,
           scopes: data.scope?.split(" ") ?? CONNECTORS_BY_ID[connectorId].scopes,
+          account,
           connectedAt: Date.now(),
         },
       },
@@ -364,6 +459,8 @@ export interface ConnectorStatus {
   available: boolean;
   writes: boolean;
   connectedAt?: number;
+  /** Provider-confirmed account identity, never user-entered display text. */
+  account?: string;
   scopes: string[];
 }
 
@@ -380,6 +477,7 @@ export async function statuses(): Promise<ConnectorStatus[]> {
     available: providerConfigured(spec.provider),
     writes: spec.writes,
     connectedAt: tokens[spec.id]?.connectedAt,
+    account: tokens[spec.id]?.account,
     scopes: spec.scopes,
   }));
 }
@@ -597,10 +695,20 @@ export interface MailHeader {
   from?: string;
 }
 
-export async function listRecentMail(max = 10): Promise<CallOutcome<MailHeader[]>> {
+export type GmailConnectorId = "gmail" | "gmail-company";
+
+export async function listRecentMail(
+  max = 10,
+  connectorId: GmailConnectorId = "gmail",
+  query = "is:unread",
+): Promise<CallOutcome<MailHeader[]>> {
+  const params = new URLSearchParams({
+    maxResults: String(max),
+    q: query,
+  });
   const list = await googleFetch<{ messages?: Array<{ id: string }> }>(
-    "gmail",
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&q=is:unread`,
+    connectorId,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
   );
   if (!list.ok) return list;
 
@@ -613,7 +721,7 @@ export async function listRecentMail(max = 10): Promise<CallOutcome<MailHeader[]
       snippet?: string;
       payload?: { headers?: Array<{ name: string; value: string }> };
     }>(
-      "gmail",
+      connectorId,
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`,
     );
     if (!detail.ok) continue;
@@ -631,12 +739,110 @@ export async function listRecentMail(max = 10): Promise<CallOutcome<MailHeader[]
   return { ok: true, data: headers };
 }
 
+export interface FacebookProfile {
+  id: string;
+  name: string;
+  picture?: {
+    data?: {
+      url?: string;
+    };
+  };
+}
+
+/**
+ * Verify the personal profile behind the Facebook grant.
+ *
+ * This deliberately stops at public_profile. Meta removed third-party
+ * publishing to personal timelines, and the cockpit must not imply that a
+ * successful Facebook login grants feed or posting access.
+ */
+export async function getFacebookProfile(): Promise<CallOutcome<FacebookProfile>> {
+  const token = await accessToken("facebook-profile");
+  if (!token) {
+    return {
+      ok: false,
+      needsConnection: true,
+      error: providerConfigured("facebook")
+        ? "Personal Facebook is not connected."
+        : "Facebook OAuth is not configured.",
+    };
+  }
+
+  try {
+    const params = new URLSearchParams({
+      fields: "id,name,picture",
+      access_token: token,
+    });
+    const response = await fetch(
+      `https://graph.facebook.com/me?${params.toString()}`,
+    );
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `facebook ${response.status}: ${(await response.text()).slice(0, 200)}`,
+        reachedProvider: true,
+      };
+    }
+    const data = (await response.json()) as FacebookProfile;
+    return { ok: true, data };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "facebook request failed",
+      reachedProvider: true,
+      uncertain: true,
+    };
+  }
+}
+
+export interface LinkedInProfile {
+  sub: string;
+  name?: string;
+  picture?: string;
+}
+
+/** Read-only proof that the OAuth grant belongs to the expected member. */
+export async function getLinkedInProfile(): Promise<CallOutcome<LinkedInProfile>> {
+  const token = await accessToken("linkedin");
+  if (!token) {
+    return {
+      ok: false,
+      needsConnection: true,
+      error: providerConfigured("linkedin")
+        ? "LinkedIn is not connected."
+        : "LinkedIn OAuth is not configured (LINKEDIN_CLIENT_ID/SECRET).",
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.linkedin.com/v2/userinfo", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `linkedin ${response.status}: ${(await response.text()).slice(0, 200)}`,
+        reachedProvider: true,
+      };
+    }
+    return { ok: true, data: (await response.json()) as LinkedInProfile };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "linkedin request failed",
+      reachedProvider: true,
+      uncertain: true,
+    };
+  }
+}
+
 /** Create a draft. Deliberately never `send` — a human presses send. */
 export async function createMailDraft(input: {
   to: string;
   subject: string;
   body: string;
   granted?: string[];
+  connectorId?: GmailConnectorId;
 }): Promise<CallOutcome<{ id: string }>> {
   const mime = [
     `To: ${input.to}`,
@@ -654,7 +860,7 @@ export async function createMailDraft(input: {
     .replace(/=+$/, "");
 
   return googleFetch<{ id: string }>(
-    "gmail",
+    input.connectorId ?? "gmail",
     "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
     { method: "POST", body: JSON.stringify({ message: { raw } }) },
     // `gmail.compose` and never `gmail.send`. A grant that somehow carried
@@ -756,7 +962,7 @@ export async function postToLinkedIn(text: string): Promise<CallOutcome<{ id: st
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        "LinkedIn-Version": process.env.LINKEDIN_API_VERSION ?? "202405",
+        "LinkedIn-Version": process.env.LINKEDIN_API_VERSION ?? "202605",
         "X-Restli-Protocol-Version": "2.0.0",
       },
       body: JSON.stringify({

@@ -13,8 +13,9 @@ import {
   formatClock,
   formatDate,
   greetingLine,
-  onThisDay,
 } from "@/lib/ambient";
+import type { DailyBriefing } from "@/lib/daily-briefing";
+import type { LiveHeadline } from "@/lib/live-news";
 import type { VoiceState } from "@/lib/useVoice";
 
 interface LampProps {
@@ -58,6 +59,8 @@ export interface HudHeaderProps {
   voiceEngaged: boolean;
   /** True when replies are generated locally rather than by a live model. */
   local: boolean;
+  /** Lets the same verified fetch populate the compact news reader. */
+  onNews?: (headlines: LiveHeadline[]) => void;
 }
 
 interface Ambient {
@@ -68,10 +71,19 @@ interface Ambient {
   live: boolean;
 }
 
-export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeaderProps) {
+export default function HudHeader({
+  voiceState,
+  voiceEngaged,
+  local,
+  onNews,
+}: HudHeaderProps) {
   // Fetched at runtime rather than inlined at build time, so changing your
   // name or city in .env.local takes effect on the next page load.
   const [ambient, setAmbient] = useState<Ambient | null>(null);
+  const [briefing, setBriefing] = useState<DailyBriefing | null>(null);
+  const [briefingError, setBriefingError] = useState(false);
+  const [briefingRefresh, setBriefingRefresh] = useState(0);
+  const [briefingHidden, setBriefingHidden] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +97,29 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBriefingError(false);
+
+    void fetch("/api/daily-briefing", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`briefing ${response.status}`);
+        return response.json() as Promise<DailyBriefing>;
+      })
+      .then((data) => {
+        setBriefing(data);
+        onNews?.(data.headlines);
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") setBriefingError(true);
+      });
+
+    return () => controller.abort();
+  }, [briefingRefresh, onNews]);
 
   // The clock is client-only; rendering it on the server would guarantee a
   // hydration mismatch within a minute of the page being built.
@@ -215,16 +250,149 @@ export default function HudHeader({ voiceState, voiceEngaged, local }: HudHeader
         />
       </div>
 
-      {/* On this day */}
-      <div className="mt-7 max-w-[380px]">
-        <div className="label-lit">On this day</div>
-        <p
-          className="mt-2 text-[12.5px] leading-[1.65]"
-          style={{ color: "var(--color-ink-soft)" }}
+      {/* A truthful aggregation of the connected surfaces. Historical context
+          remains available, but it no longer masquerades as today's brief. */}
+      {briefingHidden ? (
+        <button
+          type="button"
+          className="chip pointer-events-auto mt-7 px-4 py-2 label-lit"
+          onClick={() => setBriefingHidden(false)}
         >
-          {now ? onThisDay(now) : " "}
-        </p>
+          Show today&apos;s briefing
+        </button>
+      ) : (
+      <div className="daily-briefing-panel pointer-events-auto mt-7 max-w-[440px] overflow-hidden rounded-2xl border px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="label-lit">Today&apos;s briefing</div>
+          <div className="flex items-center gap-3">
+            {briefing ? (
+              <div className="label">
+                {briefing.coverage.live}/{briefing.coverage.total} ready ·{" "}
+                {new Date(briefing.generatedAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="label transition-colors hover:text-[color:var(--color-signal)]"
+              onClick={() => setBriefingHidden(true)}
+            >
+              Hide
+            </button>
+          </div>
+        </div>
+
+        {!briefing && !briefingError ? (
+          <div className="label mt-3 pulse-soft">Checking connected sources…</div>
+        ) : null}
+
+        {briefingError ? (
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <span className="text-[12px]" style={{ color: "var(--color-ink-soft)" }}>
+              Briefing sources could not be reached.
+            </span>
+            <button
+              type="button"
+              className="label-lit"
+              onClick={() => setBriefingRefresh((value) => value + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {briefing ? (
+          <p
+            className="mt-3 text-[12.5px] leading-relaxed"
+            style={{ color: "var(--color-ink)" }}
+          >
+            {briefing.summary}
+          </p>
+        ) : null}
+
+        {briefing ? (
+          <div className="mt-3 divide-y divide-[rgba(118,208,255,0.09)] border-t border-[rgba(118,208,255,0.09)]">
+            {briefing.lines.map((line) => {
+              const content = (
+                <>
+                  <span
+                    className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{
+                      background:
+                        line.state === "live"
+                          ? "var(--color-alive)"
+                          : line.state === "empty"
+                            ? "var(--color-signal)"
+                            : "rgba(146,171,182,0.35)",
+                      boxShadow:
+                        line.state === "live"
+                          ? "0 0 8px var(--color-alive)"
+                          : "none",
+                    }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="label block">{line.label}</span>
+                    <span
+                      className="mt-0.5 block truncate text-[12.5px]"
+                      style={{ color: "var(--color-ink)" }}
+                    >
+                      {line.text}
+                    </span>
+                    {line.detail ? (
+                      <span
+                        className="mt-0.5 block truncate text-[10.5px]"
+                        style={{ color: "var(--color-ink-faint)" }}
+                      >
+                        {line.detail}
+                      </span>
+                    ) : null}
+                  </span>
+                  {line.href ? (
+                    <span
+                      className="mt-1 text-[12px]"
+                      style={{ color: "var(--color-signal)" }}
+                      aria-hidden="true"
+                    >
+                      ↗
+                    </span>
+                  ) : null}
+                </>
+              );
+
+              return line.href ? (
+                <a
+                  key={line.id}
+                  href={line.href}
+                  target={line.external ? "_blank" : undefined}
+                  rel={line.external ? "noreferrer noopener" : undefined}
+                  className="daily-briefing-line flex gap-3 py-2.5"
+                >
+                  {content}
+                </a>
+              ) : (
+                <div key={line.id} className="flex gap-3 py-2.5">
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {briefing?.almanac ? (
+          <details className="mt-2 border-t border-[rgba(118,208,255,0.09)] pt-2">
+            <summary className="label cursor-pointer select-none">On this day</summary>
+            <p
+              className="mt-2 text-[11px] leading-relaxed"
+              style={{ color: "var(--color-ink-soft)" }}
+            >
+              {briefing.almanac}
+            </p>
+          </details>
+        ) : null}
       </div>
+      )}
     </header>
   );
 }

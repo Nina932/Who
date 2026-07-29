@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { decideAttendance, scoreAgents } from "../lib/orchestrator";
+import { decideAttendance, draftReply, scoreAgents } from "../lib/orchestrator";
 
 /**
  * Specialist Attendance is the product's headline claim, so its routing gets
@@ -28,11 +28,11 @@ describe("scoreAgents", () => {
 });
 
 describe("decideAttendance", () => {
-  it("falls back to the chief of staff rather than guessing", () => {
+  it("keeps ordinary conversation with Morpheus instead of inventing a staff handoff", () => {
     const decision = decideAttendance("hello there");
-    assert.equal(decision.primaryId, "chief-of-staff");
+    assert.equal(decision.primaryId, null);
     assert.deepEqual(decision.triggers, []);
-    assert.ok(decision.confidence < 0.5, "an unmatched turn must not look confident");
+    assert.ok(decision.confidence > 0.8, "a direct greeting should be recognized confidently");
   });
 
   it("names the specialist and the words that summoned them", () => {
@@ -60,5 +60,27 @@ describe("decideAttendance", () => {
     // Integrations are reached through agents; they cannot hold the floor.
     const decision = decideAttendance("check my drive for the file");
     assert.notEqual(decision.primaryId, "drive");
+  });
+});
+
+describe("offline replies", () => {
+  it("answers a greeting instead of reciting the chief of staff charter", () => {
+    const decision = decideAttendance("hello");
+    const reply = draftReply("hello", decision);
+    assert.match(reply, /^Hello, Nino\./);
+    assert.doesNotMatch(reply, /Holds the operator's week|Taking this one directly/);
+  });
+
+  it("does not route a social use of 'today' to the chief of staff", () => {
+    const decision = decideAttendance("hello Morpheus how are you doing today");
+    assert.equal(decision.primaryId, null);
+    assert.deepEqual(decision.triggers, []);
+  });
+
+  it("names the actually supported free-key paths", () => {
+    const decision = decideAttendance("check the sales pipeline");
+    const reply = draftReply("check the sales pipeline", decision);
+    assert.match(reply, /GROQ_API_KEY or GOOGLE_API_KEY/);
+    assert.doesNotMatch(reply, /ANTHROPIC_API_KEY/);
   });
 });

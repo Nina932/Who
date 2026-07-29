@@ -35,8 +35,6 @@ export interface AttendanceDecision {
   confidence: number;
 }
 
-const DEFAULT_HOST = "chief-of-staff";
-
 /**
  * Low-information phrases that must not earn the multi-word bonus.
  *
@@ -90,12 +88,32 @@ export function scoreAgents(utterance: string): Map<string, { score: number; hit
  * consulting in the background.
  */
 export function decideAttendance(utterance: string): AttendanceDecision {
+  const casual = utterance
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}'\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b/.test(casual) ||
+    /^(?:morpheus\s+)?how are you(?: doing)?(?: today)?$/.test(casual)
+  ) {
+    return {
+      primaryId: null,
+      supportingIds: [],
+      triggers: [],
+      confidence: 0.95,
+    };
+  }
+
   const scores = scoreAgents(utterance);
 
   if (scores.size === 0) {
-    // Nothing domain-specific — the chief of staff simply handles it.
+    // Nothing domain-specific means Morpheus answers directly. Assigning the
+    // chief-of-staff seat to every greeting made ordinary conversation look
+    // like a department had been summoned and encouraged the model to invent
+    // calendar/week-management theatre the operator never asked for.
     return {
-      primaryId: DEFAULT_HOST,
+      primaryId: null,
       supportingIds: [],
       triggers: [],
       confidence: 0.25,
@@ -137,33 +155,27 @@ export function draftReply(utterance: string, decision: AttendanceDecision): str
     : undefined;
 
   if (!agent) {
-    return "I did not catch a domain in that. Say it again and I will pull the right specialist in.";
+    const ask = utterance.trim().replace(/[.?!]+$/, "");
+    if (
+      /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening)|what'?s up|whello)\b[\s!.?]*$/i.test(
+        ask,
+      )
+    ) {
+      return "Hello, Nino. I’m here.";
+    }
+    return "I’m here. Tell me what you need, and I’ll answer directly.";
   }
 
   const ask = utterance.trim().replace(/[.?!]+$/, "");
-  const lead =
-    decision.triggers.length > 0
-      ? `Picking this up because you said ${decision.triggers
-          .slice(0, 2)
-          .map((t) => `"${t}"`)
-          .join(" and ")}.`
-      : "Taking this one directly.";
+  if (
+    /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening)|what'?s up|whello)\b[\s!.?]*$/i.test(
+      ask,
+    )
+  ) {
+    return "Hello, Nino. I’m here. Local mode is active, so voice and routing work, but live answers need a Groq or Google model key.";
+  }
 
-  return [
-    `${lead} ${agent.charter}`,
-    ``,
-    `On "${ask}" — running this against ${
-      agent.family === "council" ? "the standing context" : "my domain"
-    } now.`,
-    decision.supportingIds.length > 0
-      ? `Looping in ${decision.supportingIds
-          .map((id) => AGENTS_BY_ID[id]?.name)
-          .filter(Boolean)
-          .join(" and ")} in the background.`
-      : `No one else needed on this.`,
-    ``,
-    `[ offline mode — set ANTHROPIC_API_KEY to put a live model behind this seat ]`,
-  ].join("\n");
+  return `I routed that to ${agent.name}, but no live model is configured, so I won’t fabricate an answer. Add GROQ_API_KEY or GOOGLE_API_KEY to enable live replies.`;
 }
 
 /** Stable id generator that does not depend on a random seed at render time. */

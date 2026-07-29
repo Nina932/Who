@@ -247,13 +247,14 @@ export const TOOLS: Record<string, ToolSpec> = {
     // Draft, never send. The split is the whole reason both exist.
     capabilityId: "mail.draft",
     purpose:
-      "Save the approved reply as a Gmail draft. It is never sent — the operator presses send.",
-    schemaHint: `{"to":string,"subject":string,"body":string}`,
+      "Save the approved reply as a Gmail draft in the explicitly selected Personal or Company mailbox. It is never sent — the operator presses send.",
+    schemaHint: `{"to":string,"subject":string,"body":string,"mailbox":"personal"|"company"}`,
     async run(input, granted) {
       const root = asRecord(input);
       const to = asString(root?.to);
       const subject = asString(root?.subject);
       const body = asString(root?.body);
+      const mailbox = root?.mailbox === "company" ? "company" : "personal";
 
       if (!to || !subject || !body) {
         return { ok: false, summary: "Draft not created — to, subject and body are all required." };
@@ -262,9 +263,18 @@ export const TOOLS: Record<string, ToolSpec> = {
         return { ok: false, summary: `Draft not created — "${to}" is not a valid address.` };
       }
 
-      const result = await createMailDraft({ to, subject, body, granted });
+      const result = await createMailDraft({
+        to,
+        subject,
+        body,
+        granted,
+        connectorId: mailbox === "company" ? "gmail-company" : "gmail",
+      });
       return result.ok
-        ? { ok: true, summary: `Draft saved to Gmail for ${to} — "${subject}". Not sent.` }
+        ? {
+            ok: true,
+            summary: `Draft saved to ${mailbox === "company" ? "Company" : "Personal"} Gmail for ${to} — "${subject}". Not sent.`,
+          }
         : { ok: false, summary: `Draft failed — ${result.error}`, uncertain: result.uncertain };
     },
   },

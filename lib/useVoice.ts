@@ -5,10 +5,12 @@
  *
  * The rebuilt-voice claim in the Reznikov post is about *turn-taking*, not
  * about recognition quality: no push-to-talk, no waiting for a beep, and a
- * hard interrupt whenever the operator starts speaking again. That is what
- * this hook models.
+ * a deliberate spoken interrupt when the operator says the wake name or a
+ * stop phrase. Random room noise must never seize the floor.
  *
- * States: idle → listening ⇄ hearing → thinking → speaking → listening.
+ * States: idle → listening ⇄ hearing → thinking → executing → speaking,
+ * followed by a short completed/failed/uncertain receipt before the floor
+ * returns to the operator.
  * Tapping during `speaking` stops playback immediately and returns the floor,
  * which is the "TAP TO STOP" affordance visible in the cockpit.
  *
@@ -24,18 +26,38 @@
  * make the whole page stutter. Levels live in a ref that the render loop and
  * the shader read directly; React only sees the four state transitions.
  *
- * **Morpheus does not hear itself.** The analyser is muted for the whole time
- * speech synthesis is playing, on top of the browser's echo cancellation.
- * Without it, its own voice would drive the orb and — far worse — could read
- * as the operator holding the floor.
+ * **Morpheus does not transcribe itself.** Recognition is paused for playback,
+ * while the analyser stays live behind browser echo cancellation so a real
+ * microphone onset can still interrupt it.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SILENT, createAnalyser, type Analyser, type VoiceLevels } from "./audio";
-import { PREFERRED_VOICES, deliveryFor } from "./voice";
+import {
+  PREFERRED_VOICES,
+  deliveryFor,
+  isSpokenInterrupt,
+  speechChunks,
+  speechText,
+  withoutPlaybackEcho,
+} from "./voice";
 
-export type VoiceState = "idle" | "listening" | "hearing" | "thinking" | "speaking";
+export type VoiceState =
+  | "idle"
+  | "listening"
+  | "hearing"
+  | "thinking"
+  | "executing"
+  | "speaking"
+  | "completed"
+  | "failed"
+  | "outcome-uncertain";
+
+export type OutcomeState = Extract<
+  VoiceState,
+  "completed" | "failed" | "outcome-uncertain"
+>;
 
 /**
  * How long the level must stay under the floor before the operator is treated
@@ -47,8 +69,8 @@ const SETTLE_MS = 650;
 /**
  * How Morpheus sounds. The profile lives in `lib/voice.ts`; tune it with:
  *
- *   NEXT_PUBLIC_MORPHEUS_VOICE_PITCH=0    0 is the deepest the spec allows
- *   NEXT_PUBLIC_MORPHEUS_VOICE_RATE=0.78  below ~0.7 diction starts to smear
+ *   NEXT_PUBLIC_MORPHEUS_VOICE_PITCH=0.68 deep without flattening inflection
+ *   NEXT_PUBLIC_MORPHEUS_VOICE_RATE=0.88  deliberate without dragging clauses
  *   NEXT_PUBLIC_MORPHEUS_VOICE="Microsoft David - English (United States)"
  */
 const VOICE = deliveryFor("none");
@@ -89,9 +111,11 @@ function getRecognitionCtor(): RecognitionCtor | null {
 export interface UseVoiceOptions {
   /** Called with a completed utterance from the operator. */
   onUtterance: (text: string) => void;
+  /** Cancels the active model stream when the operator takes the floor. */
+  onInterrupt?: () => void;
 }
 
-export function useVoice({ onUtterance }: UseVoiceOptions) {
+export function useVoice({ onUtterance, onInterrupt }: UseVoiceOptions) {
   const [state, setState] = useState<VoiceState>("idle");
   const [interim, setInterim] = useState("");
 
@@ -103,12 +127,22 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
   /** False once recognition has failed for this session. */
   const [transcribing, setTranscribing] = useState(false);
   const recognitionOkRef = useRef(true);
+  /** True while synthesized speech owns the room. */
+  const speechOwnsFloorRef = useRef(false);
+  const lastPlaybackRef = useRef("");
+  const speechGenerationRef = useRef(0);
+  const ttsAbortRef = useRef<AbortController | null>(null);
+  const ttsSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const ttsContextRef = useRef<AudioContext | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const wantListeningRef = useRef(false);
   // Kept in a ref so the recognition callbacks never close over a stale prop.
   const onUtteranceRef = useRef(onUtterance);
   onUtteranceRef.current = onUtterance;
+  const onInterruptRef = useRef(onInterrupt);
+  onInterruptRef.current = onInterrupt;
+  const stopSpeakingRef = useRef<() => void>(() => {});
 
   // ── The microphone ──────────────────────────────────────────────────────
 
@@ -118,6 +152,7 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
   /** Live audio levels. Consumers read this from their own render loop. */
   const levelsRef = useRef<VoiceLevels>({ ...SILENT });
   const frameRef = useRef<number | null>(null);
+  const outcomeTimerRef = useRef<number | null>(null);
   const publishedRef = useRef<Record<string, number>>({});
   const [micLive, setMicLive] = useState(false);
 
@@ -162,10 +197,9 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     levelsRef.current = levels;
     publish(levels);
 
-    // listening ⇄ hearing, and only ever between those two. `thinking` and
-    // `speaking` own the floor: a sound arriving while Morpheus is talking is
-    // not the operator taking a turn, and must not be shown as one.
     const current = stateRef.current;
+    // Loudness still animates the core while Morpheus speaks, but it never
+    // stops playback by itself. A dropped pen is not a command.
     if (current === "listening" && levels.speaking) {
       setState("hearing");
     } else if (current === "hearing" && !levels.speaking && levels.quietFor > SETTLE_MS) {
@@ -214,9 +248,55 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
   // browser's recording indicator lit after the page is gone.
   useEffect(() => closeMicrophone, [closeMicrophone]);
 
+  useEffect(
+    () => () => {
+      if (outcomeTimerRef.current !== null) {
+        window.clearTimeout(outcomeTimerRef.current);
+      }
+    },
+    [],
+  );
+
   /** Morpheus speaking must never reach Morpheus listening. */
   const setDeaf = useCallback((deaf: boolean) => {
     analyserRef.current?.setMuted(deaf);
+  }, []);
+
+  const pauseTranscription = useCallback(() => {
+    speechOwnsFloorRef.current = true;
+    // Keep recognition alive during playback, but quarantine everything except
+    // explicit floor-taking commands in onresult. This is the only way to
+    // distinguish "Morpheus, wait" from a cough.
+    if (wantListeningRef.current && recognitionOkRef.current) {
+      try {
+        recognitionRef.current?.start();
+        setTranscribing(true);
+      } catch {
+        /* already running */
+      }
+    }
+  }, []);
+
+  const resumeTranscription = useCallback(() => {
+    speechOwnsFloorRef.current = false;
+    if (!wantListeningRef.current || !recognitionOkRef.current) return;
+    try {
+      recognitionRef.current?.start();
+      setTranscribing(true);
+    } catch {
+      /* already starting */
+    }
+  }, []);
+
+  const showOutcome = useCallback((outcome: OutcomeState, duration = 1200) => {
+    if (outcomeTimerRef.current !== null) {
+      window.clearTimeout(outcomeTimerRef.current);
+    }
+    setState(outcome);
+    outcomeTimerRef.current = window.setTimeout(() => {
+      outcomeTimerRef.current = null;
+      setState(wantListeningRef.current ? "listening" : "idle");
+    }, duration);
   }, []);
 
   // Whether the browser has a microphone API at all, as opposed to whether
@@ -249,11 +329,34 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
         if (result.isFinal) finalText += result[0].transcript;
         else pending += result[0].transcript;
       }
-      setInterim(pending);
-      if (finalText.trim()) {
+
+      // Playback may leak into recognition. It is never submitted as an
+      // operator turn; only a deliberate wake/stop phrase can take the floor.
+      if (speechOwnsFloorRef.current) {
+        if (isSpokenInterrupt(`${pending} ${finalText}`)) {
+          setInterim("");
+          stopSpeakingRef.current();
+        }
+        return;
+      }
+
+      // Apply the lexical echo check whenever a recent playback exists. It is
+      // deliberately conservative (a substantial multi-word match is
+      // required), so an arbitrary time cutoff only creates a failure mode:
+      // Chromium sometimes emits the final recognition result several seconds
+      // after the speaker has stopped.
+      const cleanedPending = lastPlaybackRef.current
+        ? withoutPlaybackEcho(pending, lastPlaybackRef.current)
+        : pending;
+      const cleanedFinal = lastPlaybackRef.current
+        ? withoutPlaybackEcho(finalText, lastPlaybackRef.current)
+        : finalText.trim();
+
+      setInterim(cleanedPending);
+      if (cleanedFinal.trim()) {
         setInterim("");
         setState("thinking");
-        onUtteranceRef.current(finalText.trim());
+        onUtteranceRef.current(cleanedFinal.trim());
       }
     };
 
@@ -283,7 +386,10 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
 
     recognition.onend = () => {
       // Chrome ends the session on its own schedule; restart if still wanted.
-      if (wantListeningRef.current && recognitionOkRef.current) {
+      if (
+        wantListeningRef.current &&
+        recognitionOkRef.current
+      ) {
         try {
           recognition.start();
         } catch {
@@ -335,14 +441,26 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
 
   /** Interrupt: kill playback and hand the floor straight back. */
   const stopSpeaking = useCallback(() => {
+    speechGenerationRef.current += 1;
+    ttsAbortRef.current?.abort();
+    ttsAbortRef.current = null;
+    try {
+      ttsSourceRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+    ttsSourceRef.current = null;
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
     // Drop the queue too, or a half-spoken stream keeps firing after the
     // operator has taken the floor back.
     pendingRef.current = 0;
     doneQueueingRef.current = true;
     setDeaf(false);
+    resumeTranscription();
+    onInterruptRef.current?.();
     setState(wantListeningRef.current ? "listening" : "idle");
-  }, [setDeaf]);
+  }, [resumeTranscription, setDeaf]);
+  stopSpeakingRef.current = stopSpeaking;
 
   // ── Voice character ─────────────────────────────────────────────────────
   //
@@ -392,92 +510,218 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
   }, []);
 
   // ── Incremental speech ──────────────────────────────────────────────────
-  // SpeechSynthesis queues natively, so streamed sentences can be enqueued as
-  // they complete. State returns to listening only when the queue drains AND
-  // no more chunks are coming.
+  // These incremental methods remain available for long-form callers. The
+  // cockpit deliberately speaks a completed answer as one utterance because
+  // restarting the browser voice at every streamed sentence destroys natural
+  // sentence-level intonation.
   const pendingRef = useRef(0);
   const doneQueueingRef = useRef(true);
+  const speechFailedRef = useRef(false);
 
   const beginSpeech = useCallback(() => {
     if (typeof window === "undefined") return;
     window.speechSynthesis?.cancel();
     pendingRef.current = 0;
     doneQueueingRef.current = false;
+    speechFailedRef.current = false;
+    speechGenerationRef.current += 1;
     // A cancelled utterance does not reliably fire `onend` everywhere, so the
     // deaf flag is reset here rather than trusted to unwind on its own.
     setDeaf(false);
-  }, [setDeaf]);
+    pauseTranscription();
+  }, [pauseTranscription, setDeaf]);
 
   const speakChunk = useCallback((text: string) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     // Bracketed system notes are for the eye, not the ear.
-    const spoken = text.replace(/\[[^\]]*\]/g, "").trim();
+    const spoken = speechText(text);
     if (!spoken) return;
 
     const utterance = new SpeechSynthesisUtterance(spoken);
+    lastPlaybackRef.current = spoken;
     if (voiceRef.current) utterance.voice = voiceRef.current;
     // 0 is the floor the spec allows, and every engine honours it.
     utterance.pitch = VOICE.pitch;
     utterance.rate = VOICE.rate;
     pendingRef.current += 1;
+    const generation = speechGenerationRef.current;
 
-    const settle = () => {
+    const settle = (ok: boolean) => {
+      if (generation !== speechGenerationRef.current) return;
+      if (!ok) speechFailedRef.current = true;
       pendingRef.current = Math.max(0, pendingRef.current - 1);
       // Only once the whole queue has drained. Unmuting in the gap between two
       // chunks would let the tail of one sentence be measured as the operator.
-      if (pendingRef.current === 0) setDeaf(false);
       if (pendingRef.current === 0 && doneQueueingRef.current) {
-        setState(wantListeningRef.current ? "listening" : "idle");
+        setDeaf(false);
+        resumeTranscription();
+        showOutcome(speechFailedRef.current ? "failed" : "completed");
       }
     };
 
     utterance.onstart = () => {
-      setDeaf(true);
       setState("speaking");
     };
-    utterance.onend = settle;
-    utterance.onerror = settle;
+    utterance.onend = () => settle(true);
+    utterance.onerror = () => settle(false);
     window.speechSynthesis.speak(utterance);
-  }, [setDeaf]);
+  }, [resumeTranscription, setDeaf, showOutcome]);
 
   const endSpeech = useCallback(() => {
     doneQueueingRef.current = true;
     if (pendingRef.current === 0) {
-      setState(wantListeningRef.current ? "listening" : "idle");
+      setDeaf(false);
+      resumeTranscription();
+      showOutcome(speechFailedRef.current ? "failed" : "completed");
     }
-  }, []);
+  }, [resumeTranscription, setDeaf, showOutcome]);
 
   const speak = useCallback((text: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      setState(wantListeningRef.current ? "listening" : "idle");
-      return;
-    }
-    window.speechSynthesis.cancel();
+    if (typeof window === "undefined") return;
+    window.speechSynthesis?.cancel();
+    ttsAbortRef.current?.abort();
+    speechGenerationRef.current += 1;
+    const generation = speechGenerationRef.current;
+    pauseTranscription();
 
     // Strip the bracketed system notes — they are for the eye, not the ear.
-    const spoken = text.replace(/\[[^\]]*\]/g, "").trim();
+    const spoken = speechText(text);
     if (!spoken) {
       setState(wantListeningRef.current ? "listening" : "idle");
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(spoken);
-    if (voiceRef.current) utterance.voice = voiceRef.current;
-    utterance.pitch = VOICE.pitch;
-    utterance.rate = VOICE.rate;
-    const settle = () => {
+    lastPlaybackRef.current = spoken;
+
+    const settle = (failed = false) => {
+      if (generation !== speechGenerationRef.current) return;
+      ttsAbortRef.current = null;
+      ttsSourceRef.current = null;
       setDeaf(false);
-      setState(wantListeningRef.current ? "listening" : "idle");
+      resumeTranscription();
+      if (failed) showOutcome("failed");
+      else showOutcome("completed");
     };
 
-    utterance.onstart = () => {
-      setDeaf(true);
-      setState("speaking");
+    const browserFallback = () => {
+      if (
+        generation !== speechGenerationRef.current ||
+        !window.speechSynthesis
+      ) {
+        settle(true);
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(spoken);
+      if (voiceRef.current) utterance.voice = voiceRef.current;
+      utterance.pitch = VOICE.pitch;
+      utterance.rate = VOICE.rate;
+      utterance.onstart = () => setState("speaking");
+      utterance.onend = () => settle(false);
+      utterance.onerror = () => settle(true);
+      window.speechSynthesis.speak(utterance);
     };
-    utterance.onend = settle;
-    utterance.onerror = settle;
-    window.speechSynthesis.speak(utterance);
-  }, [setDeaf]);
+
+    const play = async () => {
+      const chunks = speechChunks(spoken);
+      // The free endpoint is deliberately reserved for normal conversational
+      // turns. Long reports remain complete through the local browser voice
+      // rather than burning several provider requests or truncating speech.
+      if (chunks.length === 0 || chunks.length > 3) {
+        browserFallback();
+        return;
+      }
+
+      const abort = new AbortController();
+      ttsAbortRef.current = abort;
+      try {
+        const AudioContextCtor = window.AudioContext;
+        const context =
+          ttsContextRef.current && ttsContextRef.current.state !== "closed"
+            ? ttsContextRef.current
+            : new AudioContextCtor();
+        ttsContextRef.current = context;
+        if (context.state === "suspended") await context.resume();
+
+        for (const chunk of chunks) {
+          if (generation !== speechGenerationRef.current) return;
+          const response = await fetch("/api/speech", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text: chunk }),
+            signal: abort.signal,
+          });
+          if (!response.ok) throw new Error(`speech ${response.status}`);
+
+          const buffer = await context.decodeAudioData(
+            await response.arrayBuffer(),
+          );
+          if (generation !== speechGenerationRef.current) return;
+
+          await new Promise<void>((resolve, reject) => {
+            const source = context.createBufferSource();
+            const body = context.createBiquadFilter();
+            const presence = context.createBiquadFilter();
+            const compressor = context.createDynamicsCompressor();
+            source.buffer = buffer;
+
+            // Cullen's celebrated performance needed little processing. This
+            // restrained contour adds physical weight without a caricatured
+            // vocoder: a modest chest lift and a slight edge reduction.
+            body.type = "lowshelf";
+            body.frequency.value = 130;
+            body.gain.value = 3.5;
+            presence.type = "peaking";
+            presence.frequency.value = 3_200;
+            presence.Q.value = 0.75;
+            presence.gain.value = -1.5;
+            compressor.threshold.value = -19;
+            compressor.knee.value = 12;
+            compressor.ratio.value = 2.4;
+            compressor.attack.value = 0.008;
+            compressor.release.value = 0.18;
+
+            source
+              .connect(body)
+              .connect(presence)
+              .connect(compressor)
+              .connect(context.destination);
+            ttsSourceRef.current = source;
+            source.onended = () => resolve();
+            try {
+              setState("speaking");
+              source.start();
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }
+        settle(false);
+      } catch (error) {
+        if (
+          generation !== speechGenerationRef.current ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        browserFallback();
+      }
+    };
+
+    void play();
+  }, [pauseTranscription, resumeTranscription, setDeaf, showOutcome]);
+
+  useEffect(
+    () => () => {
+      ttsAbortRef.current?.abort();
+      try {
+        ttsSourceRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      void ttsContextRef.current?.close();
+    },
+    [],
+  );
 
   return {
     state,
@@ -501,6 +745,7 @@ export function useVoice({ onUtterance }: UseVoiceOptions) {
     beginSpeech,
     speakChunk,
     endSpeech,
+    showOutcome,
     stopSpeaking,
   };
 }

@@ -25,7 +25,7 @@ describe("routeTurn", () => {
     assert.equal(route.role, "quick");
   });
 
-  it("escalates consequential judgment to Opus", () => {
+  it("escalates consequential judgment to the protected judgment role", () => {
     for (const utterance of [
       "should we raise our pricing next quarter?",
       "is it worth it to hire someone",
@@ -33,7 +33,6 @@ describe("routeTurn", () => {
     ]) {
       const route = routeTurn(utterance);
       assert.equal(route.role, "judgment", `"${utterance}" must escalate`);
-      assert.equal(route.spec.provider, "anthropic");
       assert.match(route.reason, /Consequential/);
     }
   });
@@ -104,6 +103,7 @@ describe("provider preference", () => {
   const NO_KEYS = {
     GROQ_API_KEY: undefined,
     GOOGLE_API_KEY: undefined,
+    GEMINI_API_KEY: undefined,
     ANTHROPIC_API_KEY: undefined,
   };
 
@@ -154,44 +154,72 @@ describe("consequential judgment never downgrades", () => {
     return undefined;
   };
 
-  const ONLY_FAST = {
+  const ONLY_GROQ = {
     GROQ_API_KEY: "x",
-    GOOGLE_API_KEY: "y",
+    GOOGLE_API_KEY: undefined,
+    GEMINI_API_KEY: undefined,
     ANTHROPIC_API_KEY: undefined,
   };
 
-  it("has exactly one candidate, so there is nothing to fall back to", () => {
-    assert.equal(candidatesFor("judgment").length, 1);
+  it("contains only explicitly approved judgment candidates", () => {
+    assert.deepEqual(
+      candidatesFor("judgment").map((candidate) => candidate.provider),
+      ["anthropic", "groq"],
+    );
   });
 
-  it("resolves to nothing rather than to the fast tier", () => {
-    // The failure this prevents is invisible: the answer still arrives, still
-    // fluent, just from a model that should not have been asked.
-    withKeys(ONLY_FAST, () => {
-      assert.equal(specFor("judgment"), null);
-      assert.notEqual(specFor("quick"), null);
+  it("can explicitly prefer Groq for every text role", () => {
+    withKeys(
+      {
+        GROQ_API_KEY: "test",
+        GOOGLE_API_KEY: "test",
+        MORPHEUS_PREFER_GROQ: "true",
+      },
+      () => {
+        assert.equal(specFor("quick")?.provider, "groq");
+        assert.equal(specFor("hard")?.provider, "groq");
+        assert.equal(specFor("judgment")?.provider, "groq");
+        assert.equal(specFor("extract")?.provider, "groq");
+      },
+    );
+  });
+
+  it("uses the explicitly approved Groq judgment seat when it is the only key", () => {
+    withKeys(ONLY_GROQ, () => {
+      const judgment = specFor("judgment");
+      assert.equal(judgment?.provider, "groq");
+      assert.equal(judgment?.model, "openai/gpt-oss-120b");
     });
   });
 
-  it("refuses the call and says why, rather than answering from elsewhere", async () => {
-    await withKeys(ONLY_FAST, async () => {
+  it("still refuses when no approved judgment provider is configured", async () => {
+    await withKeys(
+      {
+        GROQ_API_KEY: undefined,
+        GOOGLE_API_KEY: "y",
+        ANTHROPIC_API_KEY: undefined,
+      },
+      async () => {
       const result = await callRole("judgment", {
         system: "",
         messages: [{ role: "user", content: "should we raise pricing" }],
       });
       assert.equal(result.live, false);
       assert.match(result.error ?? "", /ANTHROPIC_API_KEY/);
+      assert.match(result.error ?? "", /GROQ_API_KEY/);
       assert.match(result.error ?? "", /worse than none/);
       assert.equal(result.text, "");
-    });
+      },
+    );
   });
 
   it("marks the protected role in the status readout", () => {
-    withKeys(ONLY_FAST, () => {
+    withKeys(ONLY_GROQ, () => {
       const judgment = stackStatus().find((s) => s.role === "judgment");
       assert.ok(judgment);
       assert.equal(judgment.protected, true);
-      assert.equal(judgment.ready, false);
+      assert.equal(judgment.ready, true);
+      assert.equal(judgment.spec.provider, "groq");
       // And the rest of the stack is unaffected — one missing key must not
       // present as a dead stack.
       assert.ok(stackStatus().some((s) => s.ready));
